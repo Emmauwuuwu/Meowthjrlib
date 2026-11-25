@@ -1,4 +1,4 @@
--- Meowthjrlib: a tile GUI library for Roblox. One file, no dependencies. See README.md.
+-- Meowthjrlib: a GUI library for Roblox. One file, no dependencies. See README.md.
 
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
@@ -24,6 +24,26 @@ local C = {
 	Danger = Color3.fromHex("FF8A8A"),
 }
 local DEFAULT_ACCENT = Color3.fromHex("E8E5E0")
+
+-- Premade looks: the window's colors and a matching accent. Within a theme no two colors may be equal,
+-- because switching finds each color on screen and swaps it for the same role in the new theme.
+local THEME_KEYS = { "Window", "Fade", "Panel", "Tile", "Menu", "Field", "Socket", "Track", "Knob", "Text", "Muted" }
+local THEME_ORDER = { "Graphite", "Mono", "Obsidian", "Midnight", "Forest", "Wine", "Ocean", "Light" }
+local THEMES = {
+	Graphite = { accent = "E8E5E0", Window = "181716", Fade = "131211", Panel = "211F1E", Tile = "2B2927", Menu = "353331", Field = "100F0E", Socket = "403D3A", Track = "474440", Knob = "DCD9D5", Text = "F7F5F2", Muted = "ABA7A1" },
+	Mono = { accent = "E6E6E6", Window = "1C1C1C", Fade = "171717", Panel = "252525", Tile = "2F2F2F", Menu = "3A3A3A", Field = "141414", Socket = "444444", Track = "4C4C4C", Knob = "DDDDDD", Text = "F5F5F5", Muted = "ABABAB" },
+	Obsidian = { accent = "FFFFFF", Window = "0A0A0A", Fade = "060606", Panel = "121212", Tile = "1A1A1A", Menu = "242424", Field = "030303", Socket = "2E2E2E", Track = "363636", Knob = "E0E0E0", Text = "FAFAFA", Muted = "A0A0A0" },
+	Midnight = { accent = "8FB8FF", Window = "12151C", Fade = "0E1117", Panel = "191D26", Tile = "222734", Menu = "2C3240", Field = "0B0D12", Socket = "363D4D", Track = "3E4657", Knob = "D6DCE8", Text = "F2F5FA", Muted = "9AA3B5" },
+	Forest = { accent = "6FE3B0", Window = "131815", Fade = "0F1311", Panel = "1A211D", Tile = "232C27", Menu = "2D3731", Field = "0B0F0D", Socket = "37423B", Track = "3F4B44", Knob = "D5E0D9", Text = "F1F7F3", Muted = "9BAAA1" },
+	Wine = { accent = "FF8FB3", Window = "1A1317", Fade = "150F12", Panel = "231A1F", Tile = "2E2229", Menu = "382B33", Field = "110C0F", Socket = "44343D", Track = "4C3B45", Knob = "E3D6DD", Text = "F9F1F5", Muted = "AE9CA6" },
+	Light = { accent = "2F6BFF", Window = "F3F1EE", Fade = "E9E6E2", Panel = "F8F7F5", Tile = "FCFBFA", Menu = "FDFDFC", Field = "EAE7E3", Socket = "D5D1CC", Track = "CCC8C3", Knob = "FEFEFE", Text = "1E1C1A", Muted = "6F6B66" },
+	Ocean = { accent = "5FD8E6", Window = "111819", Fade = "0D1314", Panel = "172122", Tile = "1F2B2D", Menu = "283537", Field = "0A0F10", Socket = "314043", Track = "39494C", Knob = "D3E2E4", Text = "F0F8F9", Muted = "98AAAD" },
+}
+local function setPalette(t)
+	for _, k in THEME_KEYS do
+		C[k] = Color3.fromHex(t[k])
+	end
+end
 local function hexes(...)
 	local out = {}
 	for i, h in { ... } do
@@ -47,6 +67,7 @@ local F = {
 	head = Font.new("rbxasset://fonts/families/BuilderExtended.json", Enum.FontWeight.Bold),
 	icon = Font.new(ICONS, Enum.FontWeight.Regular),
 	iconFill = Font.new(ICONS, Enum.FontWeight.Bold),
+	mono = Font.fromEnum(Enum.Font.RobotoMono),
 }
 
 -- Icons picked from a word in the name when the script doesn't give one.
@@ -64,12 +85,17 @@ local GUESS = {
 }
 
 local WIDTH, HEIGHT, SIDE = 772, 512, 190
-local TILE_H, GAP = 110, 12
 local MIN_W, MIN_H = 600, 400
+-- Height of the window while minimized: just its header.
+local MINI_H = 64
 
 local Lib = {}
-local UI, Category, Module, Option = {}, {}, {}, {}
+local UI, Category, Module, Option, Tab = {}, {}, {}, {}, {}
 UI.__index, Category.__index, Module.__index, Option.__index = UI, Category, Module, Option
+-- A tab passes anything it doesn't have to its category, so the ready-made widgets work on tabs too.
+Tab.__index = function(_, k)
+	return Tab[k] or Category[k]
+end
 
 ---------------------------------------------------------------- helpers
 
@@ -200,6 +226,10 @@ local function inputName(i)
 	if i.UserInputType == Enum.UserInputType.Keyboard then
 		return i.KeyCode.Name
 	end
+	-- Controller buttons. The sticks only move, so they can't be keys.
+	if i.UserInputType.Name:match("^Gamepad") and not i.KeyCode.Name:match("^Thumbstick") then
+		return i.KeyCode.Name
+	end
 	return MOUSE[i.UserInputType.Name] and i.UserInputType.Name or nil
 end
 
@@ -213,27 +243,38 @@ local function withMods(name)
 	return out .. name
 end
 
-local function contrast(a, b)
-	local function lum(c)
-		local function f(v)
-			return v <= 0.03928 and v / 12.92 or ((v + 0.055) / 1.055) ^ 2.4
-		end
-		return 0.2126 * f(c.R) + 0.7152 * f(c.G) + 0.0722 * f(c.B) + 0.05
+local function luminance(c)
+	local function f(v)
+		return v <= 0.03928 and v / 12.92 or ((v + 0.055) / 1.055) ^ 2.4
 	end
-	local x, y = lum(a), lum(b)
+	return 0.2126 * f(c.R) + 0.7152 * f(c.G) + 0.0722 * f(c.B)
+end
+
+local function contrast(a, b)
+	local x, y = luminance(a) + 0.05, luminance(b) + 0.05
 	return math.max(x, y) / math.min(x, y)
 end
 
--- The accent has to light up against the dark surfaces: black, for example, becomes silver.
+local function isLight()
+	return luminance(C.Tile) > 0.5
+end
+
+-- The accent has to stand out from the surfaces: dark themes lighten it (black becomes silver), light ones darken it.
 local function visible(c)
-	while contrast(c, C.Tile) < 6.5 do
-		c = c:Lerp(Color3.new(1, 1, 1), 0.06)
+	local light = isLight()
+	local toward, need = light and Color3.new() or Color3.new(1, 1, 1), light and 3.2 or 6.5
+	for _ = 1, 80 do
+		if contrast(c, C.Tile) >= need then
+			break
+		end
+		c = c:Lerp(toward, 0.06)
 	end
 	return c
 end
 
+-- Text that reads on c: near black or white.
 local function inkOn(c)
-	return contrast(C.Ink, c) >= contrast(C.Text, c) and C.Ink or C.Text
+	return contrast(C.Ink, c) >= contrast(Color3.new(1, 1, 1), c) and C.Ink or Color3.new(1, 1, 1)
 end
 
 local function toColor(v)
@@ -250,6 +291,23 @@ end
 local function cleanName(s)
 	s = tostring(s):gsub("[^%w %-_]", ""):gsub("^[%s_]+", ""):gsub("%s+$", ""):sub(1, 24)
 	return s
+end
+
+-- Checks and stores a theme. Colors it leaves out come from Graphite.
+local function registerTheme(name, colors)
+	assert(type(name) == "string" and name ~= "" and type(colors) == "table", "A theme needs a name and a table of colors")
+	local t, seen = {}, { ["14120F"] = "Ink", ["040404"] = "Shade", FF8A8A = "Danger", FFFFFF = "pure white", ["000000"] = "pure black" }
+	for _, k in THEME_KEYS do
+		local c = toColor(colors[k]) or Color3.fromHex(THEMES.Graphite[k])
+		local hex = c:ToHex():upper()
+		assert(not seen[hex], "Theme '" .. name .. "': " .. k .. " is the same color as " .. tostring(seen[hex]) .. ". Each one must differ.")
+		seen[hex], t[k] = k, hex
+	end
+	t.accent = (toColor(colors.accent) or DEFAULT_ACCENT):ToHex()
+	if not THEMES[name] then
+		table.insert(THEME_ORDER, name)
+	end
+	THEMES[name] = t
 end
 
 ---------------------------------------------------------------- storage
@@ -333,8 +391,8 @@ end
 -- One global drag at a time: sliders, the window and widgets all use this.
 function UI:_drag(input, onMove, onDone)
 	self._dragging = { input = input, move = onMove, done = onDone }
-	if self._pageList then
-		self._pageList.ScrollingEnabled = false
+	for _, l in { self._pageList, self._grid } do
+		l.ScrollingEnabled = false
 	end
 end
 
@@ -355,8 +413,8 @@ function UI:_endDrag()
 	for _, fn in after do
 		fn()
 	end
-	if self._pageList then
-		self._pageList.ScrollingEnabled = true
+	for _, l in { self._pageList, self._grid } do
+		l.ScrollingEnabled = true
 	end
 	if d and d.done then
 		d.done()
@@ -457,26 +515,6 @@ local function gloss(parent, radius)
 	return g
 end
 
--- A soft glow: stacked rounded frames behind a surface. Returns a painter(color or nil, time).
-local function halo(ui, parent, radius, layers, step, alpha)
-	local box = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 0 }, parent)
-	local rings = {}
-	for i = 1, layers do
-		rings[i] = corner(make("Frame", {
-			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), BackgroundTransparency = 1,
-			Size = UDim2.new(1, i * step * 2, 1, i * step * 2),
-		}, box), radius + i * step)
-	end
-	return function(color, time_)
-		for _, r in rings do
-			if color then
-				r.BackgroundColor3 = color
-			end
-			ui:_tween(r, time_ or 0.35, { BackgroundTransparency = color and alpha or 1 })
-		end
-	end
-end
-
 -- Round light made of stacked discs; Roblox has no radial gradient.
 local function orb(parent, color, radius, alpha)
 	local box = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(radius * 2, radius * 2) }, parent)
@@ -511,23 +549,6 @@ local function colorProp(o)
 	return o:IsA("ImageLabel") and "ImageColor3" or "TextColor3"
 end
 
--- Floods b with color from a point, or drains it back. done() runs when it settles.
-function UI:_flood(b, radius, depth, color, on, at, done)
-	local size = b.AbsoluteSize / self:_scaleNow()
-	at = at or size / 2
-	local reach = 2 * Vector2.new(math.max(at.X, size.X - at.X), math.max(at.Y, size.Y - at.Y)).Magnitude
-	local layer = corner(make("CanvasGroup", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), ZIndex = 0 }, b), radius)
-	shade(layer, depth)
-	local disc = make("Frame", { BackgroundColor3 = color, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(at.X, at.Y) }, layer)
-	make("UICorner", { CornerRadius = UDim.new(1, 0) }, disc)
-	disc.Size = UDim2.fromOffset(on and 0 or reach, on and 0 or reach)
-	local t = self:_tween(disc, on and 0.55 or 0.36, { Size = UDim2.fromOffset(on and reach or 0, on and reach or 0) })
-	t.Completed:Connect(function()
-		done(layer)
-	end)
-	return layer
-end
-
 -- A glint of light crossing a gem.
 function UI:_glint(b, radius)
 	if self.ReducedMotion or not self.Open then
@@ -552,7 +573,7 @@ end
 
 ---------------------------------------------------------------- options
 
-local HAS_VALUE = { Toggle = true, Slider = true, Dropdown = true, TextBox = true, Color = true, Key = true, Range = true }
+local HAS_VALUE = { Toggle = true, Slider = true, Dropdown = true, TextBox = true, Color = true, Key = true, Range = true, Keybind = true }
 
 local coerce = {}
 function coerce.Toggle(_, v)
@@ -601,6 +622,10 @@ end
 function coerce.Key(_, v)
 	return validBind(v) and v or nil
 end
+-- A Keybind may be empty: "" means no key.
+function coerce.Keybind(_, v)
+	return (v == "" or validBind(v)) and v or nil
+end
 function coerce.Color(_, v)
 	return toColor(v)
 end
@@ -614,15 +639,16 @@ end
 
 function Option:_changed()
 	local m = self.Module
+	if self.Kind == "Keybind" then
+		self.Key = self.Value ~= "" and self.Value or nil
+	end
 	if self._paint then
 		self._paint()
 	end
 	if self.Callback then
 		task.spawn(self.Callback, self.Value, self.Alpha)
 	end
-	if m.UI._page == m then
-		m.UI:_refreshRows()
-	end
+	m.UI:_refreshAll()
 	m.UI:_save()
 end
 
@@ -685,6 +711,10 @@ end
 function Option:_press()
 	if self.Kind == "Toggle" then
 		self:Set(not self.Value)
+	elseif self.Kind == "Keybind" then
+		if self.OnPress then
+			task.spawn(self.OnPress)
+		end
 	elseif self.Callback then
 		task.spawn(self.Callback)
 	end
@@ -697,6 +727,120 @@ function Option:Reset()
 		return
 	end
 	self:Set(self.Default)
+end
+
+-- false while the setting is greyed out: by SetDisabled, or by its enabledIf.
+function Option:_enabled()
+	if self._disabled then
+		return false
+	end
+	local f = self.EnabledIf
+	if f == nil then
+		return true
+	end
+	if type(f) == "table" then
+		return f.Value and f.Value ~= "" or false
+	end
+	local ok, v = pcall(f)
+	return not ok or v and true or false
+end
+
+-- Greys the setting out so it can't be changed. reason shows when you point at it.
+function Option:SetDisabled(on, reason)
+	self._disabled = on == true
+	if reason ~= nil then
+		self.Reason = reason
+	end
+	-- Rebuilt below, so a new reason shows.
+	if self._lock then
+		self._lock:Destroy()
+		self._lock = nil
+		self._row:SetAttribute("Locked", nil)
+	end
+	self.Module.UI:_refreshAll()
+end
+
+-- Changes the text shown for the setting. It keeps saving under the name it was made with.
+function Option:SetName(text)
+	self._label = tostring(text)
+	if self.Kind == "Section" then
+		self.Text = self._label
+	end
+	self.Module.UI:_rerender(self)
+end
+
+function Option:SetTip(text)
+	self.Tip = text
+	self.Module.UI:_rerender(self)
+end
+
+function Option:Destroy()
+	local m = self.Module
+	local i = table.find(m.Options, self)
+	if not i then
+		return
+	end
+	for _, a in table.clone(self._attached or {}) do
+		a:Destroy()
+	end
+	if self.Attach then
+		local j = table.find(self.Attach._attached, self)
+		if j then
+			table.remove(self.Attach._attached, j)
+		end
+	end
+	table.remove(m.Options, i)
+	m._byName[self.Name] = nil
+	for _, x in { self._row, self._swatch } do
+		x:Destroy()
+	end
+	self._row, self._paint, self._rebuild, self._lock, self._swatch = nil, nil, nil, nil, nil
+	local ui = m.UI
+	if ui._listening == self then
+		ui._listening = nil
+	end
+	if ui._page == m then
+		ui:_openPage(m, true)
+	end
+	ui:_refreshAll()
+	ui:_filter()
+	ui:_save()
+end
+
+-- True while the key is held: a Keybind's own key, or the key set on a toggle or button.
+function Option:IsDown()
+	local bind = self.Kind == "Keybind" and self.Value or self.Key
+	if not bind or bind == "" then
+		return false
+	end
+	for _, p in bind:split("+") do
+		local down
+		if MOUSE[p] then
+			down = UIS:IsMouseButtonPressed(Enum.UserInputType[p])
+		else
+			local code = keyCode(p)
+			local pad = p:match("^Button") or p:match("^DPad")
+			down = code ~= nil and (pad and UIS:IsGamepadButtonDown(Enum.UserInputType.Gamepad1, code) or not pad and UIS:IsKeyDown(code))
+		end
+		if not down then
+			return false
+		end
+	end
+	return true
+end
+
+-- A color on the toggle's own row: a swatch next to its switch that opens a picker under it.
+function Option:AddColor(name, opts, cb)
+	assert(self.Kind == "Toggle", "AddColor goes on a Toggle")
+	if type(opts) == "function" then
+		opts, cb = {}, opts
+	end
+	opts = table.clone(opts or {})
+	self._attached = self._attached or {}
+	opts.attach, opts.slot = self, #self._attached + 1
+	local o = self.Module:_option("Color", name, opts, cb)
+	table.insert(self._attached, o)
+	return o
 end
 
 function Option:_shown()
@@ -750,7 +894,10 @@ function Module:_option(kind, name, opts, cb)
 	opts = opts or {}
 	assert(type(name) == "string", kind .. " needs a name")
 	assert(not self._byName[name], "Duplicate option '" .. name .. "' in " .. self.Name)
-	local o = setmetatable({ Kind = kind, Name = name, Module = self, Callback = cb, Tip = opts.tip, Icon = opts.icon, Presets = opts.presets, ShowIf = opts.showIf }, Option)
+	local o = setmetatable({
+		Kind = kind, Name = name, Module = self, Callback = cb, Tip = opts.tip, Icon = opts.icon, Presets = opts.presets, ShowIf = opts.showIf,
+		EnabledIf = opts.enabledIf, Reason = opts.reason, Attach = opts.attach, Slot = opts.slot,
+	}, Option)
 	if kind == "Toggle" or kind == "Button" then
 		assert(opts.key == nil or validBind(opts.key), "Unknown key '" .. tostring(opts.key) .. "'")
 		o.Key, o.DefaultKey = opts.key, opts.key
@@ -770,7 +917,7 @@ function Module:_option(kind, name, opts, cb)
 		end
 	end
 	if HAS_VALUE[kind] then
-		local fallback = { Toggle = false, Slider = o.Min, Dropdown = o.Multi and {} or (o.Choices and o.Choices[1]), TextBox = "", Color = DEFAULT_ACCENT, Range = { o.Min, o.Max } }
+		local fallback = { Toggle = false, Slider = o.Min, Dropdown = o.Multi and {} or (o.Choices and o.Choices[1]), TextBox = "", Color = DEFAULT_ACCENT, Range = { o.Min, o.Max }, Keybind = "" }
 		local d = opts.default
 		if d == nil then
 			d = fallback[kind]
@@ -779,13 +926,27 @@ function Module:_option(kind, name, opts, cb)
 		assert(o.Default ~= nil or (kind == "Dropdown" and #o.Choices == 0), "Bad default for '" .. name .. "'")
 		o.Value = o.Default
 	end
+	if kind == "Keybind" then
+		o.Key = o.Value ~= "" and o.Value or nil
+	end
 	self._byName[name] = o
 	table.insert(self.Options, o)
 	-- Options added after Start pick up their saved value straight away.
 	if self.UI._started and HAS_VALUE[kind] then
 		o:_load(tbl(tbl(tbl(self.UI._data.modules)[self.Id]).opts)[name], true)
 	end
+	-- These four get their text after this returns, and show themselves then.
+	if kind ~= "Label" and kind ~= "Section" and kind ~= "Progress" and kind ~= "Image" and kind ~= "Copy" then
+		self:_show(o)
+	end
 	return o
+end
+
+-- Puts the option's row in the module's box on its category page.
+function Module:_show(o)
+	if self._box then
+		self.UI:_addRow(self, o)
+	end
 end
 
 for _, kind in { "Toggle", "Slider", "Dropdown", "TextBox", "Color", "Button", "Range" } do
@@ -803,6 +964,7 @@ function Module:Label(text, opts)
 			o._paint()
 		end
 	end
+	self:_show(o)
 	return o
 end
 
@@ -810,6 +972,7 @@ end
 function Module:Section(text)
 	local o = self:_option("Section", "section" .. #self.Options)
 	o.Text = text
+	self:_show(o)
 	return o
 end
 
@@ -824,18 +987,75 @@ function Module:Progress(name, opts)
 			o._paint()
 		end
 	end
+	self:_show(o)
 	return o
 end
 
 function Module:Image(id, height, opts)
 	local o = self:_option("Image", "image" .. #self.Options, opts)
 	o.Image, o.Height = tonumber(id) and "rbxassetid://" .. id or id, height or 140
+	self:_show(o)
+	return o
+end
+
+-- A key the user picks for your script. callback runs when it's pressed; opts.changed(key) when it's changed.
+function Module:Keybind(name, opts, cb)
+	if type(opts) == "function" then
+		opts, cb = {}, opts
+	end
+	opts = opts or {}
+	local o = self:_option("Keybind", name, opts, opts.changed)
+	o.OnPress = cb
+	return o
+end
+
+-- A dropdown of the players in the server that keeps itself up to date. opts.includeSelf lists you too.
+function Module:PlayerDropdown(name, opts, cb)
+	if type(opts) == "function" then
+		opts, cb = {}, opts
+	end
+	opts = table.clone(opts or {})
+	local o = self:Dropdown(name, opts, cb)
+	local function refresh()
+		if self._byName[o.Name] ~= o or self.UI.Dead or self.UI._byId[self.Id] ~= self then
+			return
+		end
+		local names = {}
+		for _, p in Players:GetPlayers() do
+			if p ~= Players.LocalPlayer or opts.includeSelf then
+				table.insert(names, p.Name)
+			end
+		end
+		table.sort(names, function(a, b)
+			return a:lower() < b:lower()
+		end)
+		o:SetChoices(names)
+	end
+	refresh()
+	self.UI:_on(Players.PlayerAdded, refresh)
+	self.UI:_on(Players.PlayerRemoving, function()
+		task.defer(refresh)
+	end)
+	return o
+end
+
+-- Read-only text with a copy button: an ID, an invite, a code. :SetText(text) changes it.
+function Module:CopyText(name, text, opts)
+	local o = self:_option("Copy", name, opts)
+	o.Text = tostring(text or "")
+	function o.SetText(_, t)
+		o.Text = tostring(t or "")
+		if o._paint then
+			o._paint()
+		end
+	end
+	self:_show(o)
 	return o
 end
 
 ---------------------------------------------------------------- option rows
 
-local ROW = 48
+local ROW = 40
 
 -- A rounded group that rows sit in, separated by hairlines.
 local function panel(parent)
@@ -854,7 +1074,7 @@ end
 local function baseRow(ui, parent, name, tip, height, room)
 	height = height or ROW
 	if tip then
-		height += 16
+		height += 14
 	end
 	local first = parent:FindFirstChildWhichIsA("GuiObject") == nil
 	local b = make("TextButton", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, height) }, parent)
@@ -863,9 +1083,9 @@ local function baseRow(ui, parent, name, tip, height, room)
 	end
 	local glow = corner(make("Frame", { BackgroundColor3 = C.Text, BackgroundTransparency = 1, Position = UDim2.fromOffset(4, 4), Size = UDim2.new(1, -8, 1, -8) }, b), 8)
 	ui:_hover(b, glow, 1, 0.965)
-	label(b, name, { FontFace = F.medium, TextSize = 16, Position = UDim2.fromOffset(16, tip and 9 or 0), Size = UDim2.new(0.6, -16, 0, tip and 18 or ROW) })
+	label(b, name, { FontFace = F.medium, TextSize = 15, Position = UDim2.fromOffset(16, tip and 7 or 0), Size = UDim2.new(0.6, -16, 0, tip and 18 or ROW) })
 	if tip then
-		label(b, tip, { TextColor3 = C.Muted, TextSize = 13, Position = UDim2.fromOffset(16, 29), Size = UDim2.new(1, -16 - (room or 80), 0, 16) })
+		label(b, tip, { TextColor3 = C.Muted, TextSize = 13, Position = UDim2.fromOffset(16, 25), Size = UDim2.new(1, -16 - (room or 80), 0, 16) })
 	end
 	return b, height
 end
@@ -943,10 +1163,21 @@ local function segments(ui, parent, choices, props, pick)
 	end
 end
 
+-- A disabled setting's row carries the Locked attribute; nothing inside it takes input.
+local function isLocked(inst)
+	while inst do
+		if inst:GetAttribute("Locked") then
+			return true
+		end
+		inst = inst.Parent
+	end
+	return false
+end
+
 -- Pressing anywhere on `hit` drags. set() receives x and y as 0..1 of `ref`.
 local function dragArea(ui, hit, ref, set, onHold)
 	hit.InputBegan:Connect(function(i)
-		if not isPress(i) then
+		if not isPress(i) or isLocked(hit) then
 			return
 		end
 		local function move(pos)
@@ -965,29 +1196,42 @@ end
 
 -- A row with a drawer under it that slides open.
 -- Returns the row, the drawer, and a function that changes the drawer's height.
-local function drawer(ui, parent, name, tip, contentHeight)
+-- headless: no row of its own; a color on a toggle opens it from the toggle's row.
+-- Also returns the function that opens and closes it.
+local function drawer(ui, parent, name, tip, contentHeight, headless)
 	local first = parent:FindFirstChildWhichIsA("GuiObject") == nil
 	local box = make("Frame", { BackgroundTransparency = 1, ClipsDescendants = true }, parent)
-	local b, h = baseRow(ui, box, name, tip, nil, 180)
-	box.Size = UDim2.new(1, 0, 0, h)
-	if not first then
-		divider(box)
-	end
-	local inner = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(16, h), Size = UDim2.new(1, -32, 0, contentHeight) }, box)
-	local arrow = icon(b, "chevron-small-down", 18, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), TextColor3 = C.Muted })
-	local open = false
-	b.Activated:Connect(function()
-		open = not open
-		ui:_tween(box, 0.3, { Size = UDim2.new(1, 0, 0, open and h + contentHeight + 14 or h) })
-		ui:_tween(arrow, 0.3, { Rotation = open and 180 or 0 })
-	end)
-	return b, inner, function(height)
-		contentHeight = height
-		inner.Size = UDim2.new(1, -32, 0, height)
-		if open then
-			ui:_tween(box, 0.2, { Size = UDim2.new(1, 0, 0, h + height + 14) })
+	local b, h
+	if headless then
+		b, h = make("TextButton", { BackgroundTransparency = 1, Visible = false }, box), 4
+	else
+		b, h = baseRow(ui, box, name, tip, nil, 180)
+		if not first then
+			divider(box)
 		end
 	end
+	box.Size = UDim2.new(1, 0, 0, headless and 0 or h)
+	local inner = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(16, h), Size = UDim2.new(1, -32, 0, contentHeight) }, box)
+	local arrow = not headless and icon(b, "chevron-small-down", 18, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), TextColor3 = C.Muted })
+	local open = false
+	local function height()
+		return open and h + contentHeight + 14 or headless and 0 or h
+	end
+	local function flip()
+		open = not open
+		ui:_tween(box, 0.3, { Size = UDim2.new(1, 0, 0, height()) })
+		if arrow then
+			ui:_tween(arrow, 0.3, { Rotation = open and 180 or 0 })
+		end
+	end
+	b.Activated:Connect(flip)
+	return b, inner, function(new)
+		contentHeight = new
+		inner.Size = UDim2.new(1, -32, 0, new)
+		if open then
+			ui:_tween(box, 0.2, { Size = UDim2.new(1, 0, 0, height()) })
+		end
+	end, flip
 end
 
 local render = {}
@@ -1002,6 +1246,7 @@ local function bindChip(ui, b, o, right)
 		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -right, 0.5, 0), Size = UDim2.fromOffset(0, 26), ZIndex = 3,
 	}, b), 6)
 	pad(chip, 8, 0)
+	o._chipFrame = chip
 	ui:_tip(chip, "Click, then press a key. Backspace clears it.")
 	chip.Activated:Connect(function()
 		ui:_listen(o)
@@ -1017,7 +1262,7 @@ local function bindChip(ui, b, o, right)
 end
 
 function render.Toggle(ui, o, parent)
-	local b = baseRow(ui, parent, o.Name, o.Tip, nil, 150)
+	local b = baseRow(ui, parent, o._label or o.Name, o.Tip, nil, 150)
 	local chip = bindChip(ui, b, o, 66)
 	local paint = switch(ui, b, nil, function()
 		return o.Module:_tint()
@@ -1033,14 +1278,16 @@ function render.Toggle(ui, o, parent)
 end
 
 function render.Slider(ui, o, parent)
-	local b, h = baseRow(ui, parent, o.Name, o.Tip, 62, 16)
+	local b, h = baseRow(ui, parent, o._label or o.Name, o.Tip, 52, 16)
+	-- LB and RB move it while a controller has it selected.
+	ui._padSliders[b] = o
 	local box = corner(make("TextBox", {
-		BackgroundColor3 = C.Field, BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -9, 0, o.Tip and 5 or 11),
+		BackgroundColor3 = C.Field, BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -9, 0, o.Tip and 3 or 7),
 		Size = UDim2.fromOffset(76, 26), FontFace = F.medium, TextColor3 = C.Text, TextXAlignment = Enum.TextXAlignment.Right, ClearTextOnFocus = true, ZIndex = 2,
 	}, b), 6)
 	pad(box, 7, 0)
 	ui:_hover(box, box, 1, 0)
-	local track = corner(make("Frame", { BackgroundColor3 = C.Track, Position = UDim2.new(0, 16, 0, h - 18), Size = UDim2.new(1, -32, 0, 6) }, b), 3)
+	local track = corner(make("Frame", { BackgroundColor3 = C.Track, Position = UDim2.new(0, 16, 0, h - 15), Size = UDim2.new(1, -32, 0, 6) }, b), 3)
 	local fill = corner(make("Frame", { Size = UDim2.fromScale(0, 1) }, track), 3)
 	make("UIGradient", { Color = ColorSequence.new(Color3.new(0.62, 0.62, 0.62), WHITE) }, fill)
 	local knob = make("Frame", { BackgroundColor3 = C.Text, AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(12, 12) }, track)
@@ -1084,7 +1331,7 @@ function render.Slider(ui, o, parent)
 end
 
 function render.Dropdown(ui, o, parent)
-	local b, inner, resize = drawer(ui, parent, o.Name, o.Tip, 0)
+	local b, inner, resize = drawer(ui, parent, o._label or o.Name, o.Tip, 0)
 	local value = label(b, "", {
 		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -40, 0, 0), Size = UDim2.new(0.5, -40, 1, 0),
 		TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = C.Muted,
@@ -1168,12 +1415,12 @@ function render.Dropdown(ui, o, parent)
 end
 
 function render.Range(ui, o, parent)
-	local b, h = baseRow(ui, parent, o.Name, o.Tip, 62, 16)
+	local b, h = baseRow(ui, parent, o._label or o.Name, o.Tip, 52, 16)
 	local value = label(b, "", {
-		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, o.Tip and 5 or 11), Size = UDim2.fromOffset(140, 26),
+		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, o.Tip and 3 or 7), Size = UDim2.fromOffset(140, 26),
 		FontFace = F.medium, TextXAlignment = Enum.TextXAlignment.Right,
 	})
-	local track = corner(make("Frame", { BackgroundColor3 = C.Track, Position = UDim2.new(0, 16, 0, h - 18), Size = UDim2.new(1, -32, 0, 6) }, b), 3)
+	local track = corner(make("Frame", { BackgroundColor3 = C.Track, Position = UDim2.new(0, 16, 0, h - 15), Size = UDim2.new(1, -32, 0, 6) }, b), 3)
 	local fill = corner(make("Frame", {}, track), 3)
 	local knobs, rings = {}, {}
 	for i = 1, 2 do
@@ -1214,12 +1461,12 @@ function render.Range(ui, o, parent)
 end
 
 function render.Progress(ui, o, parent)
-	local b, h = baseRow(ui, parent, o.Name, o.Tip, 62, 16)
+	local b, h = baseRow(ui, parent, o._label or o.Name, o.Tip, 52, 16)
 	local value = label(b, "", {
-		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, o.Tip and 5 or 11), Size = UDim2.fromOffset(160, 26),
+		AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, o.Tip and 3 or 7), Size = UDim2.fromOffset(160, 26),
 		TextColor3 = C.Muted, TextXAlignment = Enum.TextXAlignment.Right,
 	})
-	local track = corner(make("Frame", { BackgroundColor3 = C.Track, Position = UDim2.new(0, 16, 0, h - 18), Size = UDim2.new(1, -32, 0, 6) }, b), 3)
+	local track = corner(make("Frame", { BackgroundColor3 = C.Track, Position = UDim2.new(0, 16, 0, h - 15), Size = UDim2.new(1, -32, 0, 6) }, b), 3)
 	local fill = corner(make("Frame", { Size = UDim2.fromScale(0, 1) }, track), 3)
 	o._paint = function()
 		value.Text = o.Text
@@ -1254,7 +1501,7 @@ end
 function render.TextBox(ui, o, parent)
 	local many = o.Lines > 1
 	local tall = many and o.Lines * 18 + 16 or 0
-	local b, h = baseRow(ui, parent, o.Name, o.Tip, nil, many and 16 or 220)
+	local b, h = baseRow(ui, parent, o._label or o.Name, o.Tip, nil, many and 16 or 220)
 	local box
 	if many then
 		b.Size = UDim2.new(1, 0, 0, h + tall + 10)
@@ -1290,17 +1537,30 @@ end
 
 function render.Color(ui, o, parent)
 	local extra = o.Presets and 48 or 0
-	local b, inner = drawer(ui, parent, o.Name, o.Tip, 158 + extra + (o.Alpha and 26 or 0))
-	local swatch = corner(make("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -42, 0.5, 0), Size = UDim2.fromOffset(34, 20) }, b), 6)
+	local _, inner, _, flip = drawer(ui, parent, o._label or o.Name, o.Tip, 158 + extra + (o.Alpha and 26 or 0), o.Attach ~= nil and o.Attach._row ~= nil)
+	local b = inner.Parent:FindFirstChildWhichIsA("TextButton")
+	local swatch, hex
+	if o.Attach and o.Attach._row then
+		local right = 66 + ((o.Slot or 1) - 1) * 40
+		swatch = corner(make("TextButton", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -right, 0.5, 0), Size = UDim2.fromOffset(30, 20), ZIndex = 3 }, o.Attach._row), 6)
+		ui:_tip(swatch, o._label or o.Name)
+		swatch.Activated:Connect(flip)
+		o._swatch = swatch
+		if o.Attach._chipFrame then
+			o.Attach._chipFrame.Position = UDim2.new(1, -(right + 40), 0.5, 0)
+		end
+	else
+		swatch = corner(make("Frame", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -42, 0.5, 0), Size = UDim2.fromOffset(34, 20) }, b), 6)
+		hex = make("TextBox", {
+			BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -86, 0.5, 0), Size = UDim2.fromOffset(76, 28),
+			TextColor3 = C.Muted, TextXAlignment = Enum.TextXAlignment.Right, ClearTextOnFocus = false, ZIndex = 2,
+		}, b)
+		hex.FocusLost:Connect(function()
+			o:Set((hex.Text:gsub("[^%x]", "")))
+			o._paint()
+		end)
+	end
 	line(swatch)
-	local hex = make("TextBox", {
-		BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -86, 0.5, 0), Size = UDim2.fromOffset(76, 28),
-		TextColor3 = C.Muted, TextXAlignment = Enum.TextXAlignment.Right, ClearTextOnFocus = false, ZIndex = 2,
-	}, b)
-	hex.FocusLost:Connect(function()
-		o:Set((hex.Text:gsub("[^%x]", "")))
-		o._paint()
-	end)
 
 	if o.Presets then
 		local row = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 2), Size = UDim2.new(1, 0, 0, 28) }, inner)
@@ -1369,7 +1629,9 @@ function render.Color(ui, o, parent)
 		area.BackgroundColor3, dotHue.BackgroundColor3 = pure, pure
 		dotArea.Position = UDim2.fromScale(hsv[2], 1 - hsv[3])
 		dotHue.Position = UDim2.fromScale(hsv[1], 0.5)
-		hex.Text = "#" .. o.Value:ToHex():upper()
+		if hex then
+			hex.Text = "#" .. o.Value:ToHex():upper()
+		end
 		if fade then
 			fade.BackgroundColor3, dotFade.BackgroundColor3 = o.Value, o.Value
 			dotFade.Position = UDim2.fromScale(o.Alpha, 0.5)
@@ -1380,12 +1642,12 @@ function render.Color(ui, o, parent)
 end
 
 function render.Key(ui, o, parent)
-	local b = baseRow(ui, parent, o.Name, o.Tip, nil, 130)
+	local b = baseRow(ui, parent, o._label or o.Name, o.Tip, nil, 130)
 	local cap = keycap(b, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -16, 0.5, 0), Size = UDim2.fromOffset(0, 28), TextSize = 14 })
 	o._paint = function()
 		local live = ui._listening == o
 		local c, ink = o.Module:_tint()
-		cap.Text = live and "Press a key" or prettyBind(o.Value)
+		cap.Text = live and "Press a key" or o.Value == "" and "None" or prettyBind(o.Value)
 		ui:_tween(cap, 0.2, { BackgroundColor3 = live and c or C.Field, TextColor3 = live and ink or C.Text })
 	end
 	-- No right-click reset: right-click can be the key being set.
@@ -1394,8 +1656,31 @@ function render.Key(ui, o, parent)
 	end)
 end
 
+render.Keybind = render.Key
+
+function render.Copy(ui, o, parent)
+	local b = baseRow(ui, parent, o._label or o.Name, o.Tip, nil, 230)
+	local box = ui:_field(b, {
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -52, 0.5, 0), Size = UDim2.fromOffset(168, 28),
+		TextEditable = false, FontFace = F.mono, TextSize = 13, ZIndex = 2,
+	})
+	pad(box, 9, 0)
+	ui:_iconButton(b, "two-stacked-squares", "Copy", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(32, 32), ZIndex = 2 }, function()
+		if setclipboard then
+			setclipboard(o.Text)
+			ui:Notify("Copied", o._label or o.Name, 2, "check-large")
+		else
+			box:CaptureFocus()
+			ui:Notify("Can't copy here", "Select the text and press Ctrl+C", 3, "triangle-exclamation")
+		end
+	end)
+	o._paint = function()
+		box.Text = o.Text
+	end
+end
+
 function render.Button(ui, o, parent)
-	local b = baseRow(ui, parent, o.Name, o.Tip, nil, 130)
+	local b = baseRow(ui, parent, o._label or o.Name, o.Tip, nil, 130)
 	local chip = bindChip(ui, b, o, 42)
 	o._paint = chip
 	local arrow = icon(b, o.Icon or "chevron-small-right", 18, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), TextColor3 = C.Muted })
@@ -1424,6 +1709,9 @@ end
 ---------------------------------------------------------------- modules
 
 function Module:Set(on, force)
+	if self.NoSwitch then
+		return
+	end
 	on = on == true
 	if on == self.On and not force then
 		return
@@ -1437,7 +1725,7 @@ function Module:Set(on, force)
 		task.spawn(self.Callback, on)
 	end
 	if self.UI._started and not self.UI._loading and self.UI.NotifyToggles then
-		self.UI:Notify(self.Name, on and "On" or "Off", 1.5, self.Icon, (self:_tint()))
+		self.UI:Notify(self._label or self.Name, on and "On" or "Off", 1.5, self.Icon, (self:_tint()))
 	end
 	if not self.UI._loading then
 		self.UI:_paintHeader()
@@ -1463,6 +1751,58 @@ function Module:SetFavorite(v)
 	self:_repaint()
 	self.UI:_filter()
 	self.UI:_save()
+end
+
+-- Changes the name shown on the module's box. It keeps saving under the name it was made with.
+function Module:SetName(text)
+	self._label = tostring(text)
+	if self._layoutHead then
+		self._layoutHead()
+	end
+end
+
+function Module:SetTip(text)
+	self.Tip = text
+	if self._layoutHead then
+		self._layoutHead()
+	end
+	self.UI:_filter()
+end
+
+-- Turns the module off, then removes its box and its widget.
+function Module:Destroy()
+	local ui = self.UI
+	if ui._byId[self.Id] ~= self then
+		return
+	end
+	if self.On and self.Callback then
+		task.spawn(self.Callback, false)
+	end
+	self.On = false
+	if ui._page == self then
+		ui:_closePage()
+	end
+	if ui._listening == self then
+		ui._listening = nil
+	end
+	for _, held in ui._held do
+		local i = table.find(held, self)
+		if i then
+			table.remove(held, i)
+		end
+	end
+	ui._byId[self.Id] = nil
+	table.remove(ui.Modules, table.find(ui.Modules, self))
+	local w = table.find(ui._widgets, self)
+	if w then
+		table.remove(ui._widgets, w)
+	end
+	for _, x in { self._cell, self._widget } do
+		x:Destroy()
+	end
+	self._box, self._cell, self._paintCard, self._paintPage = nil, nil, nil, nil
+	ui:_filter()
+	ui:_save()
 end
 
 function Module:_repaint()
@@ -1587,6 +1927,7 @@ function Category:Module(name, opts, cb)
 		Name = name, Id = id, Category = self.Name, UI = ui, Callback = cb, Options = {}, _byName = {},
 		On = false, Default = opts.default == true, Key = opts.key, DefaultKey = opts.key,
 		KeyMode = "Toggle", Favorite = false, Icon = opts.icon or guessIcon(name, self.Icon), Tip = opts.tip, Hidden = self.Hidden,
+		NoSwitch = opts.toggle == false,
 	}, Module)
 	ui._byId[id] = m
 	table.insert(ui.Modules, m)
@@ -1601,6 +1942,50 @@ function Category:Module(name, opts, cb)
 	return m
 end
 
+-- A box of settings with no on/off switch.
+function Category:Group(name, opts)
+	opts = table.clone(opts or {})
+	opts.toggle = false
+	return self:Module(name, opts)
+end
+
+-- Splits the category into tabs: its page gets a strip to switch between them.
+function Category:Tab(name)
+	assert(type(name) == "string" and name ~= "", "Tab needs a name")
+	self.Tabs = self.Tabs or {}
+	for _, t in self.Tabs do
+		if t.Name == name then
+			return t
+		end
+	end
+	local t = setmetatable({ Name = name, Category = self, UI = self.UI }, Tab)
+	table.insert(self.Tabs, t)
+	self.ActiveTab = self.ActiveTab or name
+	if self.UI._started then
+		self.UI:_filter()
+	end
+	return t
+end
+
+function Tab:Module(name, opts, cb)
+	local m = self.Category:Module(name, opts, cb)
+	m.Tab = self.Name
+	if m.UI._started then
+		m.UI:_filter()
+	end
+	return m
+end
+
+function Tab:Tab(name)
+	return self.Category:Tab(name)
+end
+
+function Tab:Group(name, opts)
+	opts = table.clone(opts or {})
+	opts.toggle = false
+	return self:Module(name, opts)
+end
+
 -- A widget listing every key and what it does.
 function Category:KeyList(name)
 	return self:Module(name or "Key list", { icon = "keyboard", tip = "Shows every key you've set" }):Widget(function()
@@ -1608,7 +1993,7 @@ function Category:KeyList(name)
 		self.UI:_binds(function(x, isOption)
 			if x.Key then
 				local on = isOption and (x.Kind == "Toggle" and x.Value) or not isOption and x.On
-				table.insert(out, prettyBind(x.Key) .. "   " .. x.Name .. (on and "   On" or ""))
+				table.insert(out, prettyBind(x.Key) .. "   " .. (x._label or x.Name) .. (on and "   On" or ""))
 			end
 		end)
 		return table.concat(out, "\n")
@@ -1772,7 +2157,7 @@ function Category:ActiveList(name)
 		local on = {}
 		for _, x in self.UI.Modules do
 			if x.On and x ~= m and not x.Hidden then
-				table.insert(on, x.Name)
+				table.insert(on, x._label or x.Name)
 			end
 		end
 		return table.concat(on, "\n")
@@ -1855,7 +2240,9 @@ end
 function UI:_snapshot()
 	local d = self._data
 	d.modules = tbl(d.modules)
-	d.window = { self._rootPos.X, self._rootPos.Y, self._size.X, self._size.Y }
+	-- Saved where the full window would be, not the minimized bar.
+	local y = self._rootPos.Y + (self._minimized and (self._h - MINI_H) * self:_scaleNow() / 2 or 0)
+	d.window = { self._rootPos.X, y, self._size.X, self._size.Y }
 	for _, m in self.Modules do
 		local s = tbl(d.modules[m.Id])
 		s.on, s.key, s.mode, s.fav, s.opts = m.On, m.Key or false, m.KeyMode, m.Favorite, tbl(s.opts)
@@ -1962,149 +2349,225 @@ function UI:Import(json)
 	return self.Profile == name
 end
 
----------------------------------------------------------------- tiles
+---------------------------------------------------------------- module boxes
 
-function UI:_buildCard(m)
-	local cell = make("Frame", { BackgroundTransparency = 1, Name = m.Id }, self._grid)
-	local scale = make("UIScale", {}, make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromScale(1, 1) }, cell))
-	local body = scale.Parent
-	local glow = halo(self, body, 14, 3, 2, 0.955)
-	local b = corner(make("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.Tile }, body), 14)
-	shade(b, 0.26)
-	local stroke = line(b)
-	local shine = gloss(b, 14)
-	local big = ghost(b, m.Icon, 104, 26)
-	local badge = corner(make("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(38, 38), ZIndex = 2 }, b), 11)
-	local ic = icon(badge, m.Icon, 24, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
-	local name = label(b, m.Name, { FontFace = F.bold, TextSize = 16, Position = UDim2.new(0, 14, 1, -46), Size = UDim2.new(1, -28, 0, 20), ZIndex = 2 })
-	local state = label(b, "", { TextSize = 14, Position = UDim2.new(0, 14, 1, -27), Size = UDim2.fromOffset(60, 16), ZIndex = 2 })
-	local cap = keycap(b, { AnchorPoint = Vector2.new(1, 1), Position = UDim2.new(1, -12, 1, -11), Size = UDim2.fromOffset(0, 20), TextSize = 12, ZIndex = 2 })
-	local star = icon(b, "star", 16, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -46, 0, 16), FontFace = F.iconFill, ZIndex = 2 })
-	local opts = corner(make("TextButton", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 8), Size = UDim2.fromOffset(32, 32), ZIndex = 3 }, b), 9)
-	local optsIcon = icon(opts, "three-dots-horizontal", 20, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
-	self:_hover(opts, opts, 1, 0.84)
-	self:_tip(opts, "Options")
-	self:_tip(b, m.Tip)
-
-	-- the module's stone in the header meter
-	local stone = corner(make("TextButton", { BackgroundColor3 = C.Socket, Size = UDim2.fromOffset(16, 16), LayoutOrder = m._order }, self._meter), 5)
-	shade(stone, 0.3)
-	local stoneScale = make("UIScale", {}, stone)
-	self:_tip(stone, m.Name)
-	stone.Activated:Connect(function()
-		m:Toggle_()
-	end)
-
-	local over, shown, flood = false, nil, nil
-	local function rest()
-		local c = m.On and m:_tint() or C.Tile
-		return over and c:Lerp(WHITE, m.On and 0.16 or 0.08) or c
+-- Rough heights, used to share the boxes between the two columns.
+local EST = { Slider = 52, Range = 52, Progress = 52, Section = 30, Label = 44 }
+local function estimate(m)
+	local h = m.Tip and 56 or 46
+	for _, o in m.Options do
+		if o.Kind == "Section" or o:_shown() then
+			local base = o.Attach and 0 or o.Kind == "Image" and o.Height + 24 or o.Kind == "TextBox" and o.Lines > 1 and o.Lines * 18 + 66 or EST[o.Kind] or ROW
+			h += base + (o.Tip and not o.Attach and 14 or 0)
+		end
 	end
-	local function paint(at)
-		local c, ink = m:_tint()
-		local quiet = self.Jewels and c or C.Knob
-		local changed = shown ~= nil and shown ~= m.On
-		local moved = changed and self.Open and not self.ReducedMotion and b.AbsoluteSize.X > 10
-		shown = m.On
-		if flood then
-			flood:Destroy()
-			flood = nil
+	return h
+end
+
+-- A module on its category page: a header with its name, key and switch, then every setting, always open.
+function UI:_buildCard(m)
+	local box = corner(make("Frame", { BackgroundColor3 = C.Tile, BackgroundTransparency = self.Glass * 0.5, Name = m.Id, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y }, self._colA), 12)
+	shade(box, 0.12)
+	local stroke = line(box)
+	local scale = make("UIScale", {}, box)
+	list(box, 0)
+	make("UIPadding", { PaddingBottom = UDim.new(0, 4) }, box)
+	local head = make("TextButton", { BackgroundTransparency = 1, LayoutOrder = -1 }, box)
+	if m.NoSwitch then
+		head.Selectable = false
+	else
+		local glow = corner(make("Frame", { BackgroundColor3 = C.Text, Position = UDim2.fromOffset(4, 4), Size = UDim2.new(1, -8, 1, -8) }, head), 9)
+		self:_hover(head, glow, 1, 0.965)
+	end
+	local ic = icon(head, m.Icon, 18, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 15, 0, 23) })
+	local icScale = make("UIScale", {}, ic)
+	local star = icon(head, "star", 11, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(34, 14), FontFace = F.iconFill, ZIndex = 3 })
+	local name = label(head, "", { FontFace = F.bold, TextSize = 15 })
+	local tip = label(head, "", { TextSize = 13, TextColor3 = C.Muted })
+	local function layoutHead()
+		local h = m.Tip and 56 or 46
+		head.Size = UDim2.new(1, 0, 0, h)
+		name.Text = m._label or m.Name
+		name.Position = UDim2.fromOffset(44, m.Tip and 9 or 0)
+		name.Size = UDim2.new(1, m.NoSwitch and -60 or -176, 0, m.Tip and 20 or h)
+		tip.Text, tip.Visible = m.Tip or "", m.Tip ~= nil
+		tip.Position, tip.Size = UDim2.fromOffset(44, 30), UDim2.new(1, m.NoSwitch and -60 or -124, 0, 16)
+	end
+	layoutHead()
+
+	local paintSwitch, chip
+	if not m.NoSwitch then
+		local hit = make("TextButton", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -4, 0, 3), Size = UDim2.fromOffset(60, 40), ZIndex = 3 }, head)
+		paintSwitch = switch(self, hit, { Position = UDim2.new(1, -12, 0.5, 0) }, function()
+			return m:_tint()
+		end)
+		chip = corner(make("TextButton", {
+			BackgroundColor3 = C.Field, FontFace = F.medium, TextSize = 12, AutomaticSize = Enum.AutomaticSize.X,
+			AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -68, 0, 23), Size = UDim2.fromOffset(0, 24), ZIndex = 3,
+		}, head), 6)
+		pad(chip, 8, 0)
+		self:_tip(chip, "Click, then press a key. Right-click switches Toggle and Hold.")
+		for _, b in { hit, head } do
+			b.Activated:Connect(function()
+				m:Toggle_()
+			end)
 		end
-		-- Behind the flood on the way in, ahead of it on the way out, so dark text never sits on the dark tile.
-		local slow = moved and m.On
-		local function tint(o, color)
-			self:_tween(o, slow and 0.26 or 0.12, { [colorProp(o)] = color }, Enum.EasingStyle.Sine, slow and Enum.EasingDirection.InOut or Enum.EasingDirection.Out)
-		end
-		tint(name, m.On and ink or C.Text)
-		tint(state, m.On and ink or C.Muted)
-		tint(optsIcon, m.On and ink or C.Muted)
-		tint(star, m.On and ink or c)
-		if ic:IsA("TextLabel") then
-			ic.FontFace = m.On and F.iconFill or F.icon
-			tint(ic, m.On and ink or quiet)
-		end
-		badge.BackgroundColor3 = m.On and ink or quiet
-		self:_tween(badge, 0.25, { BackgroundTransparency = m.On and 0.88 or self.Jewels and 0.86 or 0.93 })
-		big[colorProp(big)] = m.On and ink or quiet
-		self:_tween(big, 0.4, { [fadeProp(big)] = m.On and 0.9 or 0.955, Rotation = m.On and -6 or -14 })
-		self:_tween(shine, 0.4, { BackgroundTransparency = m.On and 0.72 or 0.96 })
-		opts.BackgroundColor3 = m.On and ink or C.Text
-		cap.BackgroundColor3, cap.TextColor3 = m.On and ink or C.Field, m.On and ink or C.Muted
-		cap.BackgroundTransparency = m.On and 0.84 or 0
-		state.Text = m.On and "On" or "Off"
-		cap.Text, cap.Visible = m.Key and prettyBind(m.Key) or "", m.Key ~= nil
-		star.Visible = m.Favorite
-		stroke.Color = m.On and c:Lerp(WHITE, 0.55) or C.Text
-		self:_tween(stroke, 0.3, { Transparency = m.On and 0.25 or 0.91 })
-		glow(m.On and c or nil, 0.45)
-		self:_tween(stone, 0.25, { BackgroundColor3 = m.On and c or C.Socket })
-		if changed and m.On then
-			stoneScale.Scale = 0.3
-			self:_tween(stoneScale, 0.5, { Scale = 1 }, Enum.EasingStyle.Back)
-		end
-		if not moved then
-			self:_tween(b, changed and 0.16 or 0, { BackgroundColor3 = rest() })
-			return
-		end
-		b.BackgroundColor3 = C.Tile
-		local on = m.On
-		flood = self:_flood(b, 14, 0.26, c, on, at, function(layer)
-			if flood == layer then
-				flood = nil
-				b.BackgroundColor3 = rest()
-				layer:Destroy()
-				if on then
-					self:_glint(b, 14)
-				end
-			end
+		chip.Activated:Connect(function()
+			self:_listen(m)
 		end)
 	end
-
-	local function hover(v)
-		over = v
-		if not flood then
-			self:_tween(b, v and 0.12 or 0.26, { BackgroundColor3 = rest() })
+	local function paintChip()
+		if not chip then
+			return
 		end
-		self:_tween(scale, 0.28, { Scale = v and 1.025 or 1 })
-		self:_tween(big, 0.5, { Position = UDim2.new(1, v and -34 or -26, 0.5, v and 4 or 8) })
+		local live = self._listening == m
+		local c, ink = m:_tint()
+		chip.Text = live and "Press a key" or m.Key and prettyBind(m.Key) .. (m.KeyMode == "Hold" and "  Hold" or "") or "Set key"
+		chip.TextColor3 = live and ink or m.Key and C.Text or C.Muted
+		chip.BackgroundColor3 = live and c or C.Field
+		chip.BackgroundTransparency = (live or m.Key) and 0 or 1
 	end
-	b.MouseEnter:Connect(function()
-		hover(true)
-	end)
-	b.MouseLeave:Connect(function()
-		hover(false)
-	end)
-	b.InputBegan:Connect(function(i)
-		if isPress(i) then
-			self:_tween(scale, 0.1, { Scale = 0.95 })
+	if chip then
+		chip.MouseButton2Click:Connect(function()
+			m.KeyMode = m.KeyMode == "Hold" and "Toggle" or "Hold"
+			paintChip()
+			self:_save()
+		end)
+	end
+	local shown
+	local function paint()
+		local c = m:_tint()
+		local changed = shown ~= nil and shown ~= m.On
+		shown = m.On
+		if paintSwitch then
+			paintSwitch(m.On)
 		end
-	end)
-	b.InputEnded:Connect(function(i)
-		if isPress(i) then
-			self:_tween(scale, 0.45, { Scale = over and 1.025 or 1 }, Enum.EasingStyle.Back)
+		if ic:IsA("TextLabel") then
+			ic.FontFace = m.On and F.iconFill or F.icon
 		end
-	end)
-	b.Activated:Connect(function(i)
-		local p = i and Vector2.new(i.Position.X, i.Position.Y) or Vector2.zero
-		local at = (p - b.AbsolutePosition) / self:_scaleNow()
-		local size = b.AbsoluteSize / self:_scaleNow()
-		if at.X > 0 and at.Y > 0 and at.X < size.X and at.Y < size.Y then
-			m._clickAt = at
+		self:_tween(ic, 0.25, { [colorProp(ic)] = m.On and c or C.Muted })
+		star.Visible = m.Favorite
+		star.TextColor3 = c
+		self:_tween(stroke, 0.3, { Color = m.On and c or C.Text, Transparency = m.On and 0.55 or 0.92 })
+		paintChip()
+		if changed and m.On and not self.ReducedMotion then
+			icScale.Scale = 0.6
+			self:_tween(icScale, 0.45, { Scale = 1 }, Enum.EasingStyle.Back)
 		end
-		m:Toggle_()
-	end)
-	b.MouseButton2Click:Connect(function()
+	end
+	head.MouseButton2Click:Connect(function()
 		m:SetFavorite(not m.Favorite)
 	end)
-	opts.Activated:Connect(function()
-		self:_openPage(m)
-	end)
-	m._cell, m._cardScale, m._card = cell, scale, b
-	m._paintCard = function()
-		paint(m._clickAt)
-		m._clickAt = nil
+
+	m._box, m._cell, m._cardScale, m._card = box, box, scale, head
+	m._paintCard, m._paintPage, m._layoutHead = paint, paintChip, layoutHead
+	paint()
+end
+
+function UI:_addRow(m, o)
+	-- Rows keep their place by LayoutOrder, so one can be rebuilt without moving.
+	if not o._order then
+		m._rows = (m._rows or 0) + 2
+		o._order = o.Attach and o.Attach._order and o.Attach._order + 1 or m._rows
 	end
-	m._paintCard()
+	if o.Kind == "Section" then
+		o._row = label(m._box, o.Text, { FontFace = F.bold, TextSize = 13, TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 30) })
+		make("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingTop = UDim.new(0, 8) }, o._row)
+	else
+		local before = #m._box:GetChildren()
+		render[o.Kind](self, o, m._box)
+		o._row = m._box:GetChildren()[before + 1]
+		if o._paint then
+			o._paint()
+		end
+	end
+	o._row.LayoutOrder = o._order
+	self:_refreshModule(m)
+end
+
+-- Rebuilds one setting's row in place, after its name or tip changed.
+function UI:_rerender(o)
+	local m = o.Module
+	if m._box and o._row then
+		for _, x in { o._row, o._swatch } do
+			x:Destroy()
+		end
+		o._row, o._paint, o._rebuild, o._lock, o._swatch = nil, nil, nil, nil, nil
+		self:_addRow(m, o)
+		for _, a in o._attached or {} do
+			self:_rerender(a)
+		end
+	elseif self._page == m then
+		self:_openPage(m, true)
+	end
+end
+
+-- Covers a disabled setting so it can't be used; pointing at it shows why.
+function UI:_lock(o, on)
+	local row = o._row
+	if not row or on == (o._lock ~= nil) then
+		return
+	end
+	if on then
+		o._lock = make("TextButton", { BackgroundColor3 = row.Parent.BackgroundColor3, BackgroundTransparency = 0.35, Size = UDim2.fromScale(1, 1), ZIndex = 20 }, row)
+		self:_tip(o._lock, o.Reason or "Not available right now")
+		row:SetAttribute("Locked", true)
+	else
+		o._lock:Destroy()
+		o._lock = nil
+		row:SetAttribute("Locked", nil)
+	end
+end
+
+-- Shows rows by their showIf, greys them by their enabledIf, and shows section titles only while something under them shows.
+function UI:_refreshModule(m)
+	local title, any = nil, false
+	for _, o in m.Options do
+		if o.Kind == "Section" then
+			if title then
+				title.Visible = any
+			end
+			title, any = o._row, false
+		elseif o._row then
+			local on = o:_shown() and (not o.Attach or o.Attach:_shown())
+			o._row.Visible = on
+			if not o.Attach then
+				any = any or on
+			end
+			self:_lock(o, not o:_enabled() or o.Attach ~= nil and not o.Attach:_enabled())
+		end
+	end
+	if title then
+		title.Visible = any
+	end
+end
+
+-- After any change, since a showIf or enabledIf may look at another module's setting.
+function UI:_refreshAll()
+	for _, m in self.Modules do
+		if m._box then
+			self:_refreshModule(m)
+		end
+	end
+	if self._page then
+		self:_refreshRows()
+	end
+end
+
+-- Places the visible boxes, shortest column first.
+function UI:_balance(visibleList)
+	local hA, hB = 0, 0
+	for i, m in visibleList do
+		local h = estimate(m)
+		if not self._twoCols or hA <= hB then
+			m._cell.Parent = self._colA
+			hA += h + 10
+		else
+			m._cell.Parent = self._colB
+			hB += h + 10
+		end
+		m._cell.LayoutOrder = i
+	end
 end
 
 function UI:_matches(m)
@@ -2113,55 +2576,101 @@ function UI:_matches(m)
 		if self._filterName == "Favorites" then
 			return m.Favorite
 		end
-		return self._filterName == "All" or m.Category == self._filterName
+		if m.Category ~= self._filterName then
+			return false
+		end
+		local cat = self._cats[m.Category]
+		if cat and cat.Tabs and #cat.Tabs > 1 then
+			return (m.Tab or cat.Tabs[1].Name) == cat.ActiveTab
+		end
+		return true
 	end
-	if m.Name:lower():find(self._query, 1, true) then
+	if (m._label or m.Name):lower():find(self._query, 1, true) then
 		return true
 	end
 	for _, o in m.Options do
-		if o.Kind ~= "Label" and o.Name:lower():find(self._query, 1, true) then
+		if o.Kind ~= "Label" and o.Kind ~= "Section" and (o._label or o.Name):lower():find(self._query, 1, true) then
 			return true
 		end
 	end
 	return false
 end
 
+-- The category's tab strip, when it has more than one tab.
+function UI:_paintTabs()
+	local cat = self._query == "" and self._cats[self._filterName or ""] or nil
+	local tabs = cat and cat.Tabs
+	local show = tabs ~= nil and #tabs > 1
+	local key = show and cat.Name .. "\0" .. #tabs or nil
+	if key ~= self._tabsKey then
+		self._tabsKey = key
+		for _, c in self._tabBar:GetChildren() do
+			c:Destroy()
+		end
+		self._tabPaint = nil
+		if show then
+			local names, w = {}, 76
+			for i, t in tabs do
+				names[i] = t.Name
+				w = math.max(w, #t.Name * 8 + 28)
+			end
+			self._tabPaint = segments(self, self._tabBar, names, { AnchorPoint = Vector2.zero, Position = UDim2.new(), Size = UDim2.fromOffset(w * #names, 34) }, function(v)
+				cat.ActiveTab = v
+				self._grid.CanvasPosition = Vector2.zero
+				self:_filter(true)
+			end)
+		end
+	end
+	self._tabBar.Visible = show
+	local top = show and 124 or 80
+	self._grid.Position, self._grid.Size = UDim2.fromOffset(12, top), UDim2.new(1, -20, 1, -top)
+	if show then
+		self._tabPaint(cat.ActiveTab)
+	end
+end
+
 function UI:_filter(animate)
+	self:_paintTabs()
 	local shown = 0
+	local order = {}
 	for _, m in self.Modules do
 		if m._cell then
 			local ok = self:_matches(m)
 			m._cell.Visible = ok
-			m._cell.LayoutOrder = m._order - (m.Favorite and 10000 or 0)
 			if ok then
-				shown += 1
-				if animate then
-					m._cardScale.Scale = 0.8
-					self:_tween(m._cardScale, 0.3 + math.min(shown, 9) * 0.045, { Scale = 1 }, Enum.EasingStyle.Back)
-				end
+				table.insert(order, m)
 			end
+		end
+	end
+	table.sort(order, function(a, b)
+		return a._order - (a.Favorite and 10000 or 0) < b._order - (b.Favorite and 10000 or 0)
+	end)
+	self:_balance(order)
+	for _, m in order do
+		shown += 1
+		if animate then
+			m._cardScale.Scale = 0.96
+			self:_tween(m._cardScale, 0.3 + math.min(shown, 9) * 0.045, { Scale = 1 }, Enum.EasingStyle.Back)
 		end
 	end
 	self._shown = shown
 	self._empty.Visible = shown == 0
 	self._emptyIcon.Text = self._query ~= "" and "magnifying-glass" or self._filterName == "Favorites" and "star" or "squares-grid-plus"
 	self._emptyText.Text = self._query ~= "" and "Nothing matches. Try another word."
-		or self._filterName == "Favorites" and "Right-click a tile to keep it here."
+		or self._filterName == "Favorites" and "Right-click a module to keep it here."
 		or "No modules here yet."
 	self:_paintHeader()
 end
 
 function UI:_paintHeader()
-	local on, of, total, all = {}, {}, 0, 0
+	local on, of = {}, {}
 	for _, m in self.Modules do
-		if not m.Hidden then
-			all += 1
+		if not m.Hidden and not m.NoSwitch then
 			of[m.Category] = (of[m.Category] or 0) + 1
 			if m.Favorite then
 				of.Favorites = (of.Favorites or 0) + 1
 			end
 			if m.On then
-				total += 1
 				on[m.Category] = (on[m.Category] or 0) + 1
 				if m.Favorite then
 					on.Favorites = (on.Favorites or 0) + 1
@@ -2169,14 +2678,13 @@ function UI:_paintHeader()
 			end
 		end
 	end
-	on.All, of.All = total, all
 	for _, n in self._nav do
 		n.count.Text = on[n.name] and on[n.name] > 0 and tostring(on[n.name]) or ""
 	end
 	if self._query ~= "" then
 		self._title.Text, self._subtitle.Text = "Search", (self._shown or 0) .. " found"
 	else
-		self._title.Text = self._filterName == "All" and (self._compact and "All" or "All modules") or self._filterName
+		self._title.Text = self._filterName or ""
 		self._subtitle.Text = (on[self._filterName] or 0) .. " of " .. (of[self._filterName] or 0) .. " on"
 	end
 end
@@ -2222,13 +2730,13 @@ function UI:_setFilter(name)
 end
 
 function UI:_addNav(name, text, iconName, cat)
-	local y = #self._nav * 42 + (#self._nav >= 2 and 12 or 0)
+	local y = #self._nav * 42 + (#self._nav >= 1 and 12 or 0)
 	local b = corner(make("TextButton", { BackgroundColor3 = C.Text, Position = UDim2.fromOffset(0, y), Size = UDim2.new(1, 0, 0, 40), ZIndex = 2 }, self._navList), 10)
 	self:_hover(b, b, 1, 0.965)
 	local badge = corner(make("Frame", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 9, 0.5, 0), Size = UDim2.fromOffset(28, 28) }, b), 8)
 	shade(badge, 0.22)
 	local n = {
-		name = name, y = y, cat = cat, badge = badge,
+		name = name, y = y, cat = cat, badge = badge, button = b,
 		icon = icon(badge, iconName, 18, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) }),
 		text = label(b, text, { Position = UDim2.fromOffset(47, 0), Size = UDim2.new(1, -78, 1, 0), TextColor3 = C.Muted }),
 		count = label(b, "", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -12, 0, 0), Size = UDim2.new(0, 24, 1, 0), FontFace = F.medium, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Right, TextColor3 = C.Muted }),
@@ -2252,6 +2760,11 @@ function UI:Category(name, opts)
 			self._catCount += 1
 			c.Color = visible(toColor(opts and opts.color) or JEWELS[(self._catCount - 1) % #JEWELS + 1])
 			self:_addNav(name, name, iconName, c)
+			-- The first category is the page the window opens on.
+			if not self._filterName then
+				self._filterName = name
+				self:_paintNav(0)
+			end
 		end
 	end
 	return c
@@ -2260,9 +2773,10 @@ end
 ---------------------------------------------------------------- options page
 
 function UI:_clearPage()
-	if self._page then
-		self._page._paintPage = nil
-		for _, o in self._page.Options do
+	local m = self._page
+	if m then
+		m._paintPage = nil
+		for _, o in m.Options do
 			o._paint, o._row, o._rebuild = nil, nil, nil
 		end
 	end
@@ -2276,59 +2790,13 @@ function UI:_clearPage()
 	end
 end
 
--- The text color on the options banner while its module is on.
-function UI:_heroFg()
-	local m = self._page
-	if m and m.On and not m.Hidden then
-		return (select(2, m:_tint()))
-	end
-	return nil
-end
-
-function UI:_paintHero(m, quiet)
-	local c, ink = m:_tint()
-	local lit = m.On and not m.Hidden
-	local moved = not quiet and self._heroShown ~= nil and self._heroShown ~= lit and not self.ReducedMotion
-	self._heroShown = lit
-	if self._heroFlood then
-		self._heroFlood:Destroy()
-		self._heroFlood = nil
-	end
-	local function tint(o, color)
-		self:_tween(o, not moved and 0 or lit and 0.26 or 0.12, { [colorProp(o)] = color }, Enum.EasingStyle.Sine, lit and Enum.EasingDirection.InOut or Enum.EasingDirection.Out)
-	end
-	tint(self._pageTitle, lit and ink or C.Text)
-	tint(self._pageSub, lit and ink or C.Muted)
-	tint(self._backIcon, lit and ink or C.Muted)
-	tint(self._heroIcon, lit and ink or c)
-	tint(self._pageStarIcon, lit and ink or m.Favorite and c or C.Muted)
-	if self._pageStarIcon:IsA("TextLabel") then
-		self._pageStarIcon.FontFace = m.Favorite and F.iconFill or F.icon
-	end
-	self._heroBadge.BackgroundColor3 = lit and ink or c
-	self._heroBig[colorProp(self._heroBig)] = lit and ink or c
-	self:_tween(self._heroBig, 0.4, { [fadeProp(self._heroBig)] = lit and 0.88 or 0.92 })
-	self:_tween(self._heroShine, 0.4, { BackgroundTransparency = lit and 0.76 or 0.96 })
-	self._heroStroke.Color = lit and c:Lerp(WHITE, 0.55) or c
-	self:_tween(self._heroStroke, 0.3, { Transparency = lit and 0.3 or 0.72 })
-	self._heroGlow(lit and c or nil, 0.45)
-	if not moved then
-		self._hero.BackgroundColor3 = lit and c or C.Tile
-		return
-	end
-	self._hero.BackgroundColor3 = C.Tile
-	local at = self._heroAt
-	self._heroAt = nil
-	self._heroFlood = self:_flood(self._hero, 16, 0.26, c, lit, at, function(layer)
-		if self._heroFlood == layer then
-			self._heroFlood = nil
-			self._hero.BackgroundColor3 = lit and c or C.Tile
-			layer:Destroy()
-			if lit then
-				self:_glint(self._hero, 16)
-			end
-		end
-	end)
+-- The banner over the Settings page.
+function UI:_paintHero(m)
+	local c = m:_tint()
+	self._heroBadge.BackgroundColor3 = c
+	self._heroIcon[colorProp(self._heroIcon)] = c
+	self._heroBig[colorProp(self._heroBig)] = c
+	self._heroStroke.Color, self._heroStroke.Transparency = c, 0.72
 end
 
 -- Shows and hides rows by their showIf, and whole groups that end up empty.
@@ -2336,10 +2804,11 @@ function UI:_refreshRows()
 	for _, g in self._groups do
 		local any = false
 		for _, o in g.options do
-			local shown = o:_shown()
+			local shown = o:_shown() and (not o.Attach or o.Attach:_shown())
 			any = any or shown
 			if o._row then
 				o._row.Visible = shown
+				self:_lock(o, not o:_enabled() or o.Attach ~= nil and not o.Attach:_enabled())
 			end
 		end
 		g.panel.Visible = any
@@ -2349,30 +2818,17 @@ function UI:_refreshRows()
 	end
 end
 
-function UI:_openPage(m, still)
-	self:_hideTip()
-	self:_toggleProfiles(false)
-	local scroll = still and self._pageList.CanvasPosition or Vector2.zero
-	self:_clearPage()
-	self._page = m
-	self._pageTitle.Text = m.Name
-	self._pageSub.Text = m.Hidden and "For this profile" or m.Tip or m.Category
-	self._pageSwitchHit.Visible = not m.Hidden
-	self._pageStar.Visible = not m.Hidden
-	self._heroIcon:Destroy()
-	self._heroIcon = icon(self._heroBadge, m.Icon, 26, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
-	self._heroBig.Parent:Destroy()
-	self._heroBig = ghost(self._hero, m.Icon, 150, 150)
-
+-- Builds the Settings page: its groups of settings and a reset button.
+function UI:_renderOptions(m, parent)
 	local group
 	local title
 	for _, o in m.Options do
 		if o.Kind == "Section" then
-			title = label(self._pageList, o.Text, { FontFace = F.bold, TextSize = 15, TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 22) })
+			title = label(parent, o.Text, { FontFace = F.bold, TextSize = 15, TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 22) })
 			group = nil
 		else
 			if not group then
-				group = { panel = panel(self._pageList), title = title, options = {} }
+				group = { panel = panel(parent), title = title, options = {} }
 				title = nil
 				table.insert(self._groups, group)
 			end
@@ -2387,31 +2843,7 @@ function UI:_openPage(m, still)
 	end
 	self:_refreshRows()
 
-	local keyPaint
-	if not m.Hidden then
-		local keys = panel(self._pageList)
-		local keyRow = baseRow(self, keys, "Key", "Click, then press a key. Backspace clears it.", nil, 120)
-		local cap, capStroke = keycap(keyRow, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -16, 0.5, 0), Size = UDim2.fromOffset(0, 28), TextSize = 14 })
-		keyRow.Activated:Connect(function()
-			self:_listen(m)
-		end)
-		local modeRow = baseRow(self, keys, "Key mode", "Hold keeps it on only while the key is down.", nil, 184)
-		local modePaint = segments(self, modeRow, { "Toggle", "Hold" }, nil, function(v)
-			m.KeyMode = v
-			m._paintPage()
-			self:_save()
-		end)
-		keyPaint = function()
-			local live = self._listening == m
-			local c, ink = m:_tint()
-			cap.Text = live and "Press a key" or m.Key and prettyBind(m.Key) or "None"
-			self:_tween(cap, 0.2, { BackgroundColor3 = live and c or C.Field, TextColor3 = live and ink or C.Text })
-			capStroke.Transparency = live and 1 or 0.88
-			modePaint(m.KeyMode)
-		end
-	end
-
-	local reset = self:_ghost(self._pageList, { Size = UDim2.fromOffset(176, 36) }, function() end)
+	local reset = self:_ghost(parent, { Size = UDim2.fromOffset(176, 36) }, function() end)
 	local resetIcon = icon(reset, "arrow-spin-counter-clockwise", 18, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 12, 0.5, 0), TextColor3 = C.Muted })
 	local resetText = label(reset, "Reset to defaults", { Position = UDim2.fromOffset(38, 0), Size = UDim2.new(1, -44, 1, 0), TextColor3 = C.Muted })
 	local function resetPaint(text, color)
@@ -2428,30 +2860,28 @@ function UI:_openPage(m, still)
 			if HAS_VALUE[o.Kind] then
 				o:Reset()
 			end
-			if not m.Hidden then
-				o:SetKey(o.DefaultKey)
-			end
-		end
-		if not m.Hidden then
-			m.KeyMode = "Toggle"
-			m:SetKey(m.DefaultKey)
-			if m._widget then
-				m:_placeWidget(m._widgetHome)
-			end
 		end
 		self:_openPage(m, true)
 	end)
+end
 
-	local first = true
+-- The page that slides in over the module boxes. Only Settings uses it.
+function UI:_openPage(m, still)
+	self:_hideTip()
+	self:_toggleProfiles(false)
+	local scroll = still and self._pageList.CanvasPosition or Vector2.zero
+	self:_clearPage()
+	self._page = m
+	self._pageTitle.Text = m.Name
+	self._pageSub.Text = "For this profile"
+	self._heroIcon:Destroy()
+	self._heroIcon = icon(self._heroBadge, m.Icon, 26, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) })
+	self._heroBig.Parent:Destroy()
+	self._heroBig = ghost(self._hero, m.Icon, 150, 150)
+	self:_renderOptions(m, self._pageList)
 	m._paintPage = function()
-		self:_paintHero(m, first)
-		first = false
-		self._pageSwitch(m.On)
-		if keyPaint then
-			keyPaint()
-		end
+		self:_paintHero(m)
 	end
-	self._pageSwitch(nil)
 	m._paintPage()
 	self._pageList.CanvasPosition = scroll
 	if not still then
@@ -2461,7 +2891,8 @@ function UI:_openPage(m, still)
 end
 
 function UI:_closePage()
-	if not self._page then
+	local m = self._page
+	if not m then
 		return
 	end
 	self:_hideTip()
@@ -2581,9 +3012,9 @@ function UI:_scaleNow()
 end
 
 function UI:_paintDim()
-	local on = self.Open and self.Dim
+	local on = self.Open and self.Dim and not self._minimized
 	self:_tween(self._dim, 0.35, { BackgroundTransparency = on and 0.45 or 1 })
-	local wantBlur = self.Open and self.Blur
+	local wantBlur = self.Open and self.Blur and not self._minimized
 	if wantBlur and not self._blur then
 		self._blur = make("BlurEffect", { Size = 0 }, workspace.CurrentCamera)
 	end
@@ -2631,7 +3062,9 @@ function UI:SetOpen(open)
 		self:_tween(self._frame, 0.48, { Size = UDim2.fromOffset(w, h) })
 		self:_playMark()
 		self:_filter(true)
+		self:_padFocus(true)
 	else
+		self:_padFocus(false)
 		self:_listen(nil)
 		self:_hideTip()
 		self:_toggleProfiles(false)
@@ -2640,9 +3073,80 @@ function UI:SetOpen(open)
 		t.Completed:Connect(function()
 			if not self.Open and not self.Dead then
 				self._frame.Visible = false
+				self:_unminimize()
 			end
 		end)
 	end
+end
+
+-- With a controller, opening selects the open category, and closing lets go of the selection.
+function UI:_padFocus(on)
+	if on and not UIS:GetLastInputType().Name:match("^Gamepad") then
+		return
+	end
+	local target
+	for _, n in self._nav do
+		if n.name == self._filterName then
+			target = n.button
+		end
+	end
+	-- Objects in CoreGui use a separate selection property.
+	for _, prop in { "SelectedObject", "SelectedCoreObject" } do
+		pcall(function()
+			local cur = GuiService[prop]
+			if on then
+				GuiService[prop] = target
+			elseif cur and cur:IsDescendantOf(self.Gui) then
+				GuiService[prop] = nil
+			end
+		end)
+	end
+end
+
+-- Parts that change between the full window and the minimized bar.
+function UI:_foldParts(on)
+	self._subtitle.Visible = not on
+	self._minIcon.Text = on and "chevron-small-down" or "minus-large"
+end
+
+-- Folds the window up to its header, keeping its top edge where it is. Click the button again to unfold.
+function UI:SetMinimized(on)
+	on = on == true
+	if self.Dead or not self.Open or on == self._minimized then
+		return
+	end
+	self._minimized = on
+	self:_hideTip()
+	self:_toggleProfiles(false)
+	local shift = (self._h - MINI_H) * self:_scaleNow() / 2
+	self._rootPos += Vector2.new(0, on and -shift or shift)
+	-- Pinned to the top while it folds, so the header stays put.
+	self._stage.AnchorPoint, self._stage.Position = Vector2.new(0.5, 0), UDim2.fromScale(0.5, 0)
+	self:_foldParts(on)
+	local t = self:_tween(self._frame, 0.42, {
+		Size = UDim2.fromOffset(self._w, on and MINI_H or self._h), Position = UDim2.new(0.5, self._rootPos.X, 0.5, self._rootPos.Y),
+	})
+	if not on then
+		t.Completed:Connect(function()
+			if not self._minimized then
+				self._stage.AnchorPoint, self._stage.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5)
+			end
+		end)
+	end
+	self:_paintDim()
+	self:_save()
+end
+
+-- Back to the full window at once (used while it's hidden).
+function UI:_unminimize()
+	if not self._minimized then
+		return
+	end
+	self._minimized = false
+	self._rootPos += Vector2.new(0, (self._h - MINI_H) * self:_scaleNow() / 2)
+	self._frame.Position = UDim2.new(0.5, self._rootPos.X, 0.5, self._rootPos.Y)
+	self._stage.AnchorPoint, self._stage.Position = Vector2.new(0.5, 0.5), UDim2.fromScale(0.5, 0.5)
+	self:_foldParts(false)
 end
 
 function UI:SetEditing(on)
@@ -2713,7 +3217,7 @@ function UI:_layout()
 	self._scene.Size = self._stage.Size
 	self._sideShade.Visible = not compact
 	if self.Open then
-		self._frame.Size = UDim2.fromOffset(self._w, self._h)
+		self._frame.Size = UDim2.fromOffset(self._w, self._minimized and MINI_H or self._h)
 	end
 	self._side.Visible = not compact or self._sideOpen == true
 	self._side.BackgroundTransparency = compact and 0 or 1
@@ -2725,11 +3229,17 @@ function UI:_layout()
 	self._heroBadge.Visible = not compact
 	for _, l in { self._pageTitle, self._pageSub } do
 		l.Position = UDim2.new(0, compact and 50 or 112, 0.5, l == self._pageTitle and -24 or 3)
-		l.Size = UDim2.new(1, compact and -174 or -236, 0, l == self._pageTitle and 26 or 18)
+		l.Size = UDim2.new(1, compact and -70 or -130, 0, l == self._pageTitle and 26 or 18)
 	end
-	local cols = compact and 2 or math.clamp(math.floor((self._w - SIDE - 48) / 165), 2, 8)
 	self._grip.Visible = not compact
-	self._cells.CellSize = UDim2.new(1 / cols, -math.ceil(GAP * (cols - 1) / cols) - 1, 0, TILE_H)
+	-- One column when two would squeeze the settings.
+	local two = self._w - (compact and 0 or SIDE) >= 600
+	self._colA.Size = UDim2.new(two and 0.5 or 1, two and -5 or 0, 0, 0)
+	self._colB.Visible = two
+	if two ~= self._twoCols then
+		self._twoCols = two
+		self:_filter()
+	end
 	self:_moveWindow(self._rootPos or Vector2.zero)
 	for _, m in self._widgets do
 		m:_placeWidget(m._widgetPos)
@@ -2829,9 +3339,9 @@ function UI:SetAccent(c)
 		end
 	end
 	self:_paintNav(0)
-	-- Repaint open rows in place; rebuilding them would drop the drag that is changing the accent.
-	if self._page then
-		for _, o in self._page.Options do
+	-- Repaint rows in place; rebuilding them would drop the drag that is changing the accent.
+	for _, m in self.Modules do
+		for _, o in m.Options do
 			if o._paint then
 				o._paint()
 			end
@@ -2843,11 +3353,94 @@ function UI:SetAccent(c)
 	end)
 end
 
+-- Switches to a theme by name, or to a table of colors (saved as "Custom").
+function UI:SetTheme(theme)
+	if type(theme) == "table" then
+		self:AddTheme("Custom", theme)
+		theme = "Custom"
+	end
+	assert(THEMES[theme], "Unknown theme '" .. tostring(theme) .. "'")
+	self._settings._byName.Theme:Set(theme)
+end
+
+-- Adds a theme to the Theme list: Window, Fade, Panel, Tile, Menu, Field, Socket, Track, Knob, Text, Muted and accent.
+function UI:AddTheme(name, colors)
+	registerTheme(name, colors)
+	local o = self._settings and self._settings._byName.Theme
+	if o then
+		o:SetChoices(THEME_ORDER)
+	end
+	return self
+end
+
+-- Switches the window's colors in place. withAccent also sets the theme's accent.
+function UI:_applyTheme(name, withAccent)
+	local t = THEMES[name]
+	if not t or self.Dead then
+		return
+	end
+	self.Theme = name
+	local from = {}
+	for _, k in THEME_KEYS do
+		from[C[k]:ToHex()] = k
+	end
+	setPalette(t)
+	local function swap(d, p)
+		local k = from[d[p]:ToHex()]
+		if k then
+			d[p] = C[k]
+		end
+	end
+	-- Only the color properties each kind of object has, so this stays quick on big windows.
+	for _, d in self.Gui:GetDescendants() do
+		if d:IsA("GuiObject") then
+			swap(d, "BackgroundColor3")
+			if d:IsA("TextLabel") or d:IsA("TextButton") or d:IsA("TextBox") then
+				swap(d, "TextColor3")
+				if d:IsA("TextBox") then
+					swap(d, "PlaceholderColor3")
+				end
+			elseif d:IsA("ImageLabel") or d:IsA("ImageButton") then
+				swap(d, "ImageColor3")
+			elseif d:IsA("ScrollingFrame") then
+				swap(d, "ScrollBarImageColor3")
+			end
+		elseif d:IsA("UIStroke") then
+			swap(d, "Color")
+		end
+	end
+	if withAccent and self._accentOpt then
+		self._accentOpt:Set(Color3.fromHex(t.accent))
+	else
+		self:SetAccent(self.Accent)
+	end
+end
+
+-- How see-through the window is: the backdrop fully, the module boxes half as much.
+function UI:_paintGlass()
+	local t = self.Glass
+	self._back.GroupTransparency = t
+	self._root.BackgroundTransparency = t
+	for _, m in self.Modules do
+		if m._box then
+			m._box.BackgroundTransparency = t * 0.5
+		end
+	end
+end
+
 -- Four tiles set in a square.
 function UI:_mark(parent, size, props)
 	local box = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromOffset(size, size) }, parent)
 	for k, v in props do
 		box[k] = v
+	end
+	self._markTiles = self._markTiles or {}
+	if self._logo then
+		local img = corner(make("ImageLabel", {
+			BackgroundTransparency = 1, ScaleType = Enum.ScaleType.Fit, Size = UDim2.fromScale(1, 1),
+			Image = tonumber(self._logo) and "rbxassetid://" .. self._logo or tostring(self._logo),
+		}, box), math.floor(size * 0.24))
+		return { make("UIScale", {}, img) }
 	end
 	local tile = math.floor(size * 0.46)
 	local scales = {}
@@ -2891,7 +3484,8 @@ function UI:_build(title)
 	end
 	-- Modal frees the mouse in games that lock it while the window is open.
 	local root = corner(make("TextButton", { Modal = true, BackgroundColor3 = C.Window, Size = UDim2.fromScale(1, 1), ClipsDescendants = true }, frame), 18)
-	make("UIGradient", { Rotation = 90, Color = ColorSequence.new(WHITE, Color3.new(0.78, 0.78, 0.78)) }, root)
+	self._root = root
+	self._rootGrad = make("UIGradient", { Rotation = 90, Color = ColorSequence.new(WHITE, Color3.new(0.78, 0.78, 0.78)) }, root)
 	-- A gilded edge whose light slowly travels around the window.
 	local edge = make("UIStroke", { Color = WHITE, Thickness = 1.6, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, root)
 	self._edge = make("UIGradient", { Transparency = NumberSequence.new({
@@ -2901,7 +3495,8 @@ function UI:_build(title)
 	-- backdrop: drifting light and a mosaic, clipped to the window's round corners
 	-- Opaque, because faint layers blended over transparency round to the wrong colors.
 	local back = corner(make("CanvasGroup", { BackgroundColor3 = C.Window, Size = UDim2.fromScale(1, 1), ZIndex = 0 }, root), 18)
-	make("UIGradient", { Rotation = 90, Color = ColorSequence.new(WHITE, Color3.new(0.78, 0.78, 0.78)) }, back)
+	self._back = back
+	self._backGrad = make("UIGradient", { Rotation = 90, Color = ColorSequence.new(WHITE, Color3.new(0.78, 0.78, 0.78)) }, back)
 	local scene = make("Frame", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5) }, back)
 	self._scene = scene
 	self._orbs = {}
@@ -2938,14 +3533,12 @@ function UI:_build(title)
 	self._gridView = gridView
 	self._head = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(22, 16), Size = UDim2.new(1, -290, 0, 34) }, gridView)
 	self._title = label(self._head, "", { FontFace = F.head, TextSize = 24 })
-	self._meter = make("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.fromOffset(22, 56), Size = UDim2.new(1, -140, 0, 20) }, gridView)
-	list(self._meter, 6, Enum.FillDirection.Horizontal).VerticalAlignment = Enum.VerticalAlignment.Center
 	self._subtitle = label(gridView, "", { TextColor3 = C.Muted, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Right, AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -24, 0, 57), Size = UDim2.fromOffset(100, 18) })
 	self._menuBtn = self:_iconButton(gridView, "sidebar", nil, { Position = UDim2.fromOffset(14, 16) }, function()
 		self._sideOpen = not self._sideOpen
 		self:_layout()
 	end)
-	local searchBox = self:_field(gridView, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -62, 0, 15), Size = UDim2.fromOffset(190, 36), PlaceholderText = "Search" })
+	local searchBox = self:_field(gridView, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -100, 0, 15), Size = UDim2.fromOffset(190, 36), PlaceholderText = "Search" })
 	make("UIPadding", { PaddingLeft = UDim.new(0, 36), PaddingRight = UDim.new(0, 10) }, searchBox)
 	icon(searchBox, "magnifying-glass", 18, { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, -26, 0.5, 0), TextColor3 = C.Muted })
 	self._search, self._searchBox = searchBox, searchBox
@@ -2958,14 +3551,18 @@ function UI:_build(title)
 			self:_filter()
 		end
 	end)
+	self._tabBar = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(22, 84), Size = UDim2.new(1, -44, 0, 34), Visible = false }, gridView)
 	self._grid = make("ScrollingFrame", {
 		BackgroundTransparency = 1, Position = UDim2.fromOffset(12, 80), Size = UDim2.new(1, -20, 1, -80), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = C.Muted, ScrollBarImageTransparency = 0.5,
 		ScrollingDirection = Enum.ScrollingDirection.Y,
 	}, gridView)
-	self._cells = make("UIGridLayout", { CellPadding = UDim2.fromOffset(GAP, GAP), SortOrder = Enum.SortOrder.LayoutOrder }, self._grid)
-	-- Room for the glow and the hover scale, which would otherwise be clipped at the edges.
-	make("UIPadding", { PaddingLeft = UDim.new(0, 12), PaddingRight = UDim.new(0, 16), PaddingTop = UDim.new(0, 12), PaddingBottom = UDim.new(0, 22) }, self._grid)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 14), PaddingTop = UDim.new(0, 10), PaddingBottom = UDim.new(0, 22) }, self._grid)
+	local cols = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y }, self._grid)
+	self._colA = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(0.5, -5, 0, 0), AutomaticSize = Enum.AutomaticSize.Y }, cols)
+	self._colB = make("Frame", { BackgroundTransparency = 1, Position = UDim2.new(0.5, 5, 0, 0), Size = UDim2.new(0.5, -5, 0, 0), AutomaticSize = Enum.AutomaticSize.Y }, cols)
+	list(self._colA, 10)
+	list(self._colB, 10)
 	local fade = make("Frame", { BackgroundColor3 = C.Fade, AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 0, 1, 0), Size = UDim2.new(1, -16, 0, 26), ZIndex = 4 }, gridView)
 	make("UIGradient", { Rotation = 90, Transparency = NumberSequence.new(1, 0.1) }, fade)
 	self._empty = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(0, 84), Size = UDim2.new(1, 0, 1, -110), Visible = false }, gridView)
@@ -2976,7 +3573,6 @@ function UI:_build(title)
 	local pageView = make("Frame", { BackgroundTransparency = 1, Size = UDim2.fromScale(1, 1), Position = UDim2.fromScale(1, 0) }, main)
 	self._pageView = pageView
 	local heroBox = make("Frame", { BackgroundTransparency = 1, Position = UDim2.fromOffset(22, 16), Size = UDim2.new(1, -84, 0, 84) }, pageView)
-	self._heroGlow = halo(self, heroBox, 16, 3, 2, 0.955)
 	local hero = corner(make("Frame", { BackgroundColor3 = C.Tile, Size = UDim2.fromScale(1, 1), Active = true }, heroBox), 16)
 	self._hero = hero
 	self:_windowHandle(hero)
@@ -2987,31 +3583,11 @@ function UI:_build(title)
 	local _
 	_, self._backIcon = self:_iconButton(hero, "chevron-large-left", "Back", { AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 8, 0.5, 0), Size = UDim2.fromOffset(36, 36), ZIndex = 3 }, function()
 		self:_closePage()
-	end, function()
-		return self:_heroFg() or C.Muted
 	end)
 	self._heroBadge = corner(make("Frame", { BackgroundTransparency = 0.86, AnchorPoint = Vector2.new(0, 0.5), Position = UDim2.new(0, 50, 0.5, 0), Size = UDim2.fromOffset(48, 48), ZIndex = 2 }, hero), 14)
 	self._heroIcon = icon(self._heroBadge, "gear", 26, {})
-	self._pageTitle = label(hero, "", { FontFace = F.head, TextSize = 21, Position = UDim2.new(0, 112, 0.5, -24), Size = UDim2.new(1, -236, 0, 26), ZIndex = 2 })
-	self._pageSub = label(hero, "", { TextSize = 14, Position = UDim2.new(0, 112, 0.5, 3), Size = UDim2.new(1, -236, 0, 18), ZIndex = 2 })
-	self._pageStar, self._pageStarIcon = self:_iconButton(hero, "star", "Favorite", { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -72, 0.5, 0), ZIndex = 3 }, function()
-		self._page:SetFavorite(not self._page.Favorite)
-	end, function()
-		return self:_heroFg() or self._page and self._page.Favorite and (self._page:_tint()) or C.Muted
-	end)
-	self._pageSwitchHit = make("TextButton", { BackgroundTransparency = 1, AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -18, 0.5, 0), Size = UDim2.fromOffset(50, 36), ZIndex = 3 }, hero)
-	-- On the lit banner the switch inverts, so it still stands out.
-	self._pageSwitch = switch(self, self._pageSwitchHit, { Position = UDim2.new(1, 0, 0.5, 0) }, function()
-		if not self._page then
-			return C.Knob, C.Ink
-		end
-		local c, ink = self._page:_tint()
-		return ink, c
-	end)
-	self._pageSwitchHit.Activated:Connect(function()
-		self._heroAt = Vector2.new(hero.AbsoluteSize.X / self:_scaleNow() - 38, 42)
-		self._page:Toggle_()
-	end)
+	self._pageTitle = label(hero, "", { FontFace = F.head, TextSize = 21, Position = UDim2.new(0, 112, 0.5, -24), Size = UDim2.new(1, -130, 0, 26), ZIndex = 2 })
+	self._pageSub = label(hero, "", { TextSize = 14, TextColor3 = C.Muted, Position = UDim2.new(0, 112, 0.5, 3), Size = UDim2.new(1, -130, 0, 18), ZIndex = 2 })
 	self._pageList = make("ScrollingFrame", {
 		BackgroundTransparency = 1, Position = UDim2.fromOffset(20, 112), Size = UDim2.new(1, -30, 1, -112), CanvasSize = UDim2.new(),
 		AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 3, ScrollBarImageColor3 = C.Muted, ScrollBarImageTransparency = 0.5, ScrollingDirection = Enum.ScrollingDirection.Y,
@@ -3044,6 +3620,9 @@ function UI:_build(title)
 		self._size = Vector2.new(WIDTH, HEIGHT)
 		self:_layout()
 		self:_save()
+	end)
+	self._minBtn, self._minIcon = self:_iconButton(main, "minus-large", "Minimize", { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -54, 0, 16), ZIndex = 5 }, function()
+		self:SetMinimized(not self._minimized)
 	end)
 	self:_iconButton(main, "x", nil, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -16, 0, 16), ZIndex = 5 }, function()
 		self:SetOpen(false)
@@ -3159,7 +3738,7 @@ function UI:_build(title)
 	self:_paintChrome()
 end
 
--- Everything outside the tiles that wears the accent.
+-- Everything outside the module rows that wears the accent.
 function UI:_paintChrome()
 	local a = self.Accent
 	local j = self.Jewels
@@ -3170,7 +3749,12 @@ function UI:_paintChrome()
 	for _, t in self._markTiles do
 		t.tile.BackgroundColor3 = mark[t.i]
 	end
-	self._wordShade.Color = ColorSequence.new(a:Lerp(WHITE, 0.75), a)
+	local light = isLight()
+	self._wordShade.Color = light and ColorSequence.new(C.Text, C.Text:Lerp(a, 0.65)) or ColorSequence.new(a:Lerp(WHITE, 0.75), a)
+	-- Light themes need a gentler fall-off and sidebar shade, or the window looks grey and dirty.
+	local fall = ColorSequence.new(WHITE, light and Color3.new(0.94, 0.94, 0.94) or Color3.new(0.78, 0.78, 0.78))
+	self._rootGrad.Color, self._backGrad.Color = fall, fall
+	self._sideShade.BackgroundTransparency = light and 0.95 or 0.72
 	local light = j and { a, JEWELS[3], JEWELS[1] } or { a, C.Knob, C.Knob }
 	for i, o in self._orbs do
 		for _, d in o.discs do
@@ -3210,12 +3794,12 @@ function UI:_ambient(dt)
 		self._sinceGlint = 0
 		local lit = {}
 		for _, m in self.Modules do
-			if m.On and m._cell and m._cell.Visible then
+			if m.On and m._cell and m._cell.Visible and not self._dragging then
 				table.insert(lit, m)
 			end
 		end
 		if #lit > 0 then
-			self:_glint(lit[math.random(#lit)]._card, 14)
+			self:_glint(lit[math.random(#lit)]._card, 12)
 		end
 	end
 end
@@ -3227,11 +3811,18 @@ function UI:_buildSettings()
 	s:_option("Key", "Open key", { default = self.Key, tip = "Shows or hides the window. Backspace resets it." }, function(v)
 		self.Key = v
 	end)
+	s:_option("Key", "Gamepad open key", { default = "ButtonSelect", tip = "Opens the window from a controller" }, function(v)
+		self.PadKey = v
+	end)
 	s:Slider("Window size", { min = 70, max = 130, default = 100, step = 5, suffix = "%" }, function(v)
 		self.Scale = v / 100
 		self:_settle("layout", function()
 			self:_layout()
 		end)
+	end)
+	s:Slider("Transparency", { min = 0, max = 80, default = 0, step = 5, suffix = "%", tip = "See the game through the window" }, function(v)
+		self.Glass = v / 100
+		self:_paintGlass()
 	end)
 	s:Toggle("Dim the game", { default = true }, function(v)
 		self.Dim = v
@@ -3248,11 +3839,15 @@ function UI:_buildSettings()
 		self.NotifyToggles = v
 	end)
 	s:Section("Colors")
+	s:Dropdown("Theme", { default = self.Theme, tip = "Window colors and a matching accent", table.unpack(THEME_ORDER) }, function(v)
+		-- While a profile loads, its own saved accent follows, so the theme's accent isn't forced on it.
+		self:_applyTheme(v, self._started and not self._loading)
+	end)
 	s:Dropdown("Color style", { "One color", "By category", tip = "Everything wears the accent, or each category its own gem" }, function(v)
 		self.Jewels = v == "By category"
 		self:SetAccent(self.Accent)
 	end)
-	s:Color("Accent", { default = self.Accent, presets = PRESETS, tip = "Dark colors are brightened: black becomes silver" }, function(c)
+	self._accentOpt = s:Color("Accent", { default = self.Accent, presets = PRESETS, tip = "Dark colors are brightened: black becomes silver" }, function(c)
 		self:SetAccent(c)
 	end)
 	s:Section("Profile")
@@ -3282,7 +3877,7 @@ function UI:_buildSettings()
 			end
 		end)
 	end)
-	s:Label("Right-click a setting to reset it, or a tile to favorite it. Click a slider's number to type one.")
+	s:Label("Right-click a setting to reset it, or a module's title to favorite it. Click a slider's number to type one.")
 	s:Label("Meowthjrlib, made by meowthjr")
 	if not self._store.Disk then
 		s:Label("No file access here, so profiles last until you leave.")
@@ -3294,9 +3889,11 @@ end
 function UI:_binds(fn)
 	for _, m in self.Modules do
 		if not m.Hidden then
-			fn(m, false)
+			if not m.NoSwitch then
+				fn(m, false)
+			end
 			for _, o in m.Options do
-				if o.Kind == "Toggle" or o.Kind == "Button" then
+				if o.Kind == "Toggle" or o.Kind == "Button" or o.Kind == "Keybind" then
 					fn(o, true)
 				end
 			end
@@ -3326,6 +3923,8 @@ function UI:_capture(bind)
 	if last == "Backspace" then
 		if t.Kind == "Key" then
 			t:Reset()
+		elseif t.Kind == "Keybind" then
+			t:Set("")
 		else
 			t:SetKey(nil)
 		end
@@ -3333,18 +3932,18 @@ function UI:_capture(bind)
 		local users = {}
 		self:_binds(function(x)
 			if x ~= t and x.Key == bind then
-				table.insert(users, x.Name)
+				table.insert(users, x._label or x.Name)
 			end
 		end)
 		if t.Kind == "Key" and not t.Shared and #users > 0 then
 			self:Notify("Key taken", users[1] .. " uses " .. prettyBind(bind), 3, "keyboard")
-		elseif t.Kind ~= "Key" and bind == self.Key then
+		elseif t.Kind ~= "Key" and (bind == self.Key or bind == self.PadKey) then
 			self:Notify("Key taken", prettyBind(bind) .. " opens the window", 3, "keyboard")
 		else
 			if #users > 0 and t.Kind ~= "Key" then
 				self:Notify("Shared key", users[1] .. " also uses " .. prettyBind(bind), 3, "keyboard")
 			end
-			if t.Kind == "Key" then
+			if t.Kind == "Key" or t.Kind == "Keybind" then
 				t:Set(bind)
 			else
 				t:SetKey(bind)
@@ -3359,7 +3958,7 @@ end
 
 -- Runs whatever is bound to bind. name is the key to watch for release.
 function UI:_fire(bind, name)
-	if bind == self.Key then
+	if bind == self.Key or bind == self.PadKey then
 		self:SetOpen(not self.Open)
 		return true
 	end
@@ -3370,7 +3969,9 @@ function UI:_fire(bind, name)
 		end
 		hit = true
 		if isOption then
-			x:_press()
+			if x:_enabled() then
+				x:_press()
+			end
 		elseif x.KeyMode == "Hold" then
 			self._held[name] = self._held[name] or {}
 			table.insert(self._held[name], x)
@@ -3429,6 +4030,24 @@ function UI:_inputs()
 		if not name or UIS:GetFocusedTextBox() then
 			return
 		end
+		-- Roblox may claim controller buttons for its own menus, so the open button goes first.
+		if name == self.PadKey and not self._listening then
+			self:SetOpen(not self.Open)
+			return
+		end
+		-- LB and RB step the slider a controller has selected.
+		if self.Open and (i.KeyCode == Enum.KeyCode.ButtonL1 or i.KeyCode == Enum.KeyCode.ButtonR1) then
+			for _, prop in { "SelectedObject", "SelectedCoreObject" } do
+				local ok, sel = pcall(function()
+					return GuiService[prop]
+				end)
+				local o = ok and sel and self._padSliders[sel]
+				if o and o:_enabled() then
+					o:Set(o.Value + (i.KeyCode == Enum.KeyCode.ButtonR1 and o.Step or -o.Step))
+					return
+				end
+			end
+		end
 		if self._listening then
 			if MODS[name] then
 				self._pendingMod = name
@@ -3478,6 +4097,47 @@ function UI:_inputs()
 	end)
 end
 
+-- A short loading card before the window first opens.
+function UI:_playIntro(text, done)
+	local before = #(self._markTiles or {})
+	local card = corner(make("CanvasGroup", {
+		BackgroundColor3 = C.Window, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(300, 156),
+		GroupTransparency = 1, ZIndex = 40,
+	}, self.Gui), 18)
+	line(card)
+	local scale = make("UIScale", { Scale = 0.92 }, card)
+	local marks = self:_mark(card, 40, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 24) })
+	self:_paintChrome()
+	label(card, self.Title, { FontFace = F.head, TextSize = 18, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(0, 76), Size = UDim2.new(1, 0, 0, 24) })
+	label(card, text, { TextColor3 = C.Muted, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(0, 100), Size = UDim2.new(1, 0, 0, 18) })
+	local track = corner(make("Frame", { BackgroundColor3 = C.Track, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 130), Size = UDim2.fromOffset(180, 4) }, card), 2)
+	local fill = corner(make("Frame", { BackgroundColor3 = self.Accent, Size = UDim2.fromScale(0, 1) }, track), 2)
+	self:_tween(card, 0.35, { GroupTransparency = 0 })
+	self:_tween(scale, 0.45, { Scale = 1 }, Enum.EasingStyle.Back)
+	for i, s in marks do
+		s.Scale = 0
+		task.delay(self.ReducedMotion and 0 or 0.1 + i * 0.07, function()
+			if not self.Dead then
+				self:_tween(s, 0.45, { Scale = 1 }, Enum.EasingStyle.Back)
+			end
+		end)
+	end
+	self:_tween(fill, 1.1, { Size = UDim2.fromScale(1, 1) }, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+	task.delay(self.ReducedMotion and 0.2 or 1.3, function()
+		if self.Dead then
+			return
+		end
+		self:_tween(scale, 0.25, { Scale = 0.96 })
+		self:_tween(card, 0.25, { GroupTransparency = 1 }).Completed:Connect(function()
+			card:Destroy()
+			for i = #self._markTiles, before + 1, -1 do
+				table.remove(self._markTiles, i)
+			end
+		end)
+		done()
+	end)
+end
+
 -- Call once after creating your modules: loads the saved profile and opens the window.
 function UI:Start(opts)
 	assert(not self._started, "Start was already called")
@@ -3492,6 +4152,12 @@ function UI:Start(opts)
 	self._openBtn.Visible = UIS.TouchEnabled
 	if opts.closed then
 		self:Notify(self.Title, "Press " .. prettyBind(self.Key) .. " to open", 4, "keyboard")
+	elseif self._intro then
+		self:_playIntro(type(self._intro) == "string" and self._intro or "Loading", function()
+			if not self.Open then
+				self:SetOpen(true)
+			end
+		end)
 	else
 		self:SetOpen(true)
 	end
@@ -3536,17 +4202,23 @@ function Lib.new(title, opts)
 	if old then
 		old:Destroy()
 	end
-	local accent = visible(toColor(opts.accent) or DEFAULT_ACCENT)
+	if type(opts.theme) == "table" then
+		registerTheme("Custom", opts.theme)
+	end
+	local theme = type(opts.theme) == "table" and "Custom" or opts.theme or "Graphite"
+	assert(THEMES[theme], "Unknown theme '" .. tostring(theme) .. "'")
+	setPalette(THEMES[theme])
+	local accent = visible(toColor(opts.accent) or Color3.fromHex(THEMES[theme].accent))
 	local self = setmetatable({
-		Title = title, Key = opts.key or "RightShift", Accent = accent, Ink = inkOn(accent),
+		Title = title, Key = opts.key or "RightShift", Theme = theme, Glass = 0, PadKey = "ButtonSelect",
+		_logo = opts.logo, _intro = opts.intro, _padSliders = setmetatable({}, { __mode = "k" }), Accent = accent, Ink = inkOn(accent),
 		Profile = "Default", Modules = {}, Open = false, Dead = false, Scale = 1, Dim = true, Blur = false, Jewels = false,
 		ReducedMotion = GuiService.ReducedMotionEnabled, NotifyToggles = false,
 		_conns = {}, _byId = {}, _cats = {}, _widgets = {}, _groups = {}, _nav = {}, _catCount = 0, _twinkle = 0, _sinceGlint = 0, _w = WIDTH, _h = HEIGHT, _profilesOpen = false, _profilesHeight = 0, _held = {}, _afterDrag = {}, _size = Vector2.new(WIDTH, HEIGHT), _fps = 60, _data = {},
-		_filterName = "All", _query = "", _editing = false, _rootPos = Vector2.zero, _registry = env.MeowthjrlibWindows,
+		_filterName = nil, _query = "", _editing = false, _rootPos = Vector2.zero, _registry = env.MeowthjrlibWindows,
 		_store = opts.store or makeStore(title),
 	}, UI)
 	self:_build(title)
-	self:_addNav("All", "All modules", "four-squares-grid")
 	self:_addNav("Favorites", "Favorites", "star")
 	self:_buildSettings()
 	self:_inputs()

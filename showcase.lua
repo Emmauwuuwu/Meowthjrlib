@@ -2,7 +2,7 @@
 local Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Emmauwuuwu/Meowthjrlib/main/Meowthjrlib.lua"))()
 local Players = game:GetService("Players")
 
-local ui = Lib.new("Showcase", { key = "RightShift" })
+local ui = Lib.new("Showcase", { key = "RightShift", intro = "Loading the showcase" })
 
 ---------------------------------------------------------------- widgets
 local screen = ui:Category("Screen", { icon = "computer-monitor", color = "52D9A4" })
@@ -36,17 +36,7 @@ local lists = basics:Module("Lists", { icon = "list-bulleted", tip = "Dropdowns"
 lists:Dropdown("Pick one", { "Smooth", "Instant", "Stepped", default = "Instant" }, function(v) print("Picked", v) end)
 lists:Dropdown("Pick several", { "Red", "Green", "Yellow", multi = true, default = { "Red" } }, function(v) print("Picked", table.concat(v, ", ")) end)
 lists:Dropdown("With search", { "Apple", "Banana", "Cherry", "Fig", "Grape", "Kiwi", "Lemon", "Mango", "Orange", "Pear" })
-local names = lists:Dropdown("Players here", {}, function(v) print("Player", v) end)
-local function refresh()
-	local out = {}
-	for _, p in Players:GetPlayers() do
-		table.insert(out, p.Name)
-	end
-	table.sort(out)
-	names:SetChoices(out)
-end
-refresh()
-lists:Button("Refresh players", { tip = "Updates the list above" }, refresh)
+lists:PlayerDropdown("Players here", { tip = "Updates itself as people join and leave" }, function(v) print("Player", v) end)
 
 local colors = basics:Module("Colors", { icon = "paint-brush", tip = "Solid and see-through" })
 colors:Color("Color", { default = "E3C07E", presets = { Color3.fromHex("E3C07E"), Color3.fromHex("FF6F7D"), Color3.fromHex("52D9A4") } }, function(v) print("Color", v:ToHex()) end)
@@ -74,6 +64,26 @@ smart:Slider("Width", { min = 1, max = 50, default = 20, showIf = function() ret
 smart:Section("Extra")
 smart:Toggle("Hidden toggle", { showIf = extra })
 smart:Slider("Hidden slider", { showIf = extra })
+smart:Section("Greyed out")
+local fly = smart:Toggle("Fly", { tip = "Has a color on its row: click the swatch" })
+fly:AddColor("Trail color", { default = "52D9A4" }, function(v) print("Trail", v:ToHex()) end)
+smart:Slider("Fly speed", { min = 1, max = 100, default = 30, enabledIf = fly, reason = "Turn on Fly first" })
+
+---------------------------------------------------------------- tabs, boxes without a switch
+local more = ui:Category("More", { icon = "three-small-squares", color = "F48CD8" })
+local main, extras = more:Tab("Main"), more:Tab("Extras")
+local info = main:Group("Info", { tip = "A box with no switch" })
+info:CopyText("Your user ID", Players.LocalPlayer.UserId)
+info:Keybind("Wave key", { default = "G", tip = "Your script decides what the key does" }, function()
+	ui:Notify("Key pressed", "The wave key", 2, "keyboard")
+end)
+local renamer = main:Module("Rename me", { tip = "Names and tips can change while it runs" })
+local count = 0
+renamer:Button("Rename this module", function()
+	count += 1
+	renamer:SetName("Renamed " .. count .. "x")
+end)
+extras:Module("On another tab", { tip = "Tabs split a big category" })
 
 ---------------------------------------------------------------- messages
 local messages = ui:Category("Messages", { icon = "bell", color = "FF6F7D" })
@@ -111,6 +121,9 @@ end)
 c:Button("Switch to profile Showcase 2", { tip = "Made as a copy if it's new" }, function() ui:SetProfile("Showcase 2") end)
 c:Button("Switch back to Default", function() ui:SetProfile("Default") end)
 c:Button("Edit layout", { tip = "Drag the widgets around" }, function() ui:SetEditing(true) end)
+c:Button("Light theme", function() ui:SetTheme("Light") end)
+c:Button("Back to Graphite", function() ui:SetTheme("Graphite") end)
+c:Button("Minimize", { tip = "Same as the minus button" }, function() ui:SetMinimized(true) end)
 c:Button("Unload", { icon = "trash-can" }, function()
 	ui:Dialog("Unload?", "Removes this window.", { "Cancel", "Unload" }, function(choice)
 		if choice == "Unload" then
