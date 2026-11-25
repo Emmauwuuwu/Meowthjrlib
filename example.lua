@@ -1,5 +1,5 @@
 -- Demo: every module here only changes text inside the GUI.
-local Lib = loadstring(readfile("Meowthjrlib.lua"))()
+local Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Emmauwuuwu/Meowthjrlib/main/Meowthjrlib.lua"))()
 
 local ui = Lib.new("Meowthjrlib", { key = "RightShift" })
 
