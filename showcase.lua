@@ -1,5 +1,5 @@
 -- Meowthjrlib showcase: every feature in one script. Nothing here touches the game.
-local Lib = loadstring(readfile("Meowthjrlib.lua"))()
+local Lib = loadstring(game:HttpGet("https://raw.githubusercontent.com/Emmauwuuwu/Meowthjrlib/main/Meowthjrlib.lua"))()
 local Players = game:GetService("Players")
 
 local ui = Lib.new("Showcase", { key = "RightShift" })
