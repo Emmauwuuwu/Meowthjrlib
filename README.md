@@ -69,3 +69,7 @@ Profiles save to `Meowthjrlib/<title>/` in the executor's workspace folder. With
 ## Check
 
 `loadstring(readfile("selfcheck.lua"))()(Lib)` uses memory storage, so it won't touch saved profiles.
+
+## License
+
+MIT, see `LICENSE`.
