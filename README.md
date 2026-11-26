@@ -60,8 +60,11 @@ Keys are Roblox key names, `MouseButton2`, `MouseButton3`, or a combination: `"L
 - `ui:AddTheme(name, {Window, Fade, Panel, Tile, Menu, Field, Socket, Track, Knob, Text, Muted, accent})`: adds it to the Theme list. Missing colors come from Graphite; no two may be the same.
 - `ui:SetMinimized(bool)`: folds the window to its header bar, like the − button. `ui:SetTheme(name)`, `ui:Notify(title, text, seconds, icon, color)`, `ui:SetAccent(color)`, `ui:SetOpen(bool)`, `ui:SetProfile(name)`, `ui:Export()`, `ui:Import(text)`
 - `ui:Destroy()`: saves, calls every active module's callback with `false`, removes everything
+- `ui:OnUnload(function() end)`: runs when the window is unloaded, after every module is off. Disconnect your own connections and remove your own parts there.
 
 Option callbacks run once at `Start` with their starting value. A module's callback runs at `Start` only if it starts on.
+
+Callbacks are safe: if one errors, the rest of the window keeps working, a notification says which module and setting it came from, and the error with its traceback goes to the console. Each place reports at most once every 5 seconds.
 
 Profiles save to `Meowthjrlib/<title>/` in the executor's workspace folder. Without file functions they last until you leave. A damaged profile is kept as `<name>.bad`.
 

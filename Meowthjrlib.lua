@@ -646,7 +646,7 @@ function Option:_changed()
 		self._paint()
 	end
 	if self.Callback then
-		task.spawn(self.Callback, self.Value, self.Alpha)
+		m.UI:_call(self.Callback, self:_where(), self.Value, self.Alpha)
 	end
 	m.UI:_refreshAll()
 	m.UI:_save()
@@ -708,15 +708,21 @@ function Option:SetKey(key)
 	self.Module.UI:_save()
 end
 
+-- "Module: setting", for error messages.
+function Option:_where()
+	local m = self.Module
+	return (m._label or m.Name) .. ": " .. (self._label or self.Name)
+end
+
 function Option:_press()
 	if self.Kind == "Toggle" then
 		self:Set(not self.Value)
 	elseif self.Kind == "Keybind" then
 		if self.OnPress then
-			task.spawn(self.OnPress)
+			self.Module.UI:_call(self.OnPress, self:_where())
 		end
 	elseif self.Callback then
-		task.spawn(self.Callback)
+		self.Module.UI:_call(self.Callback, self:_where())
 	end
 end
 
@@ -1688,7 +1694,7 @@ function render.Button(ui, o, parent)
 		arrow.Position, arrow[colorProp(arrow)] = UDim2.new(1, -8, 0.5, 0), (o.Module:_tint())
 		ui:_tween(arrow, 0.45, { Position = UDim2.new(1, -14, 0.5, 0), [colorProp(arrow)] = C.Muted }, Enum.EasingStyle.Back)
 		if o.Callback then
-			task.spawn(o.Callback)
+			ui:_call(o.Callback, o:_where())
 		end
 	end)
 end
@@ -1722,7 +1728,7 @@ function Module:Set(on, force)
 		self:_paintWidget()
 	end
 	if self.Callback then
-		task.spawn(self.Callback, on)
+		self.UI:_call(self.Callback, self._label or self.Name, on)
 	end
 	if self.UI._started and not self.UI._loading and self.UI.NotifyToggles then
 		self.UI:Notify(self._label or self.Name, on and "On" or "Off", 1.5, self.Icon, (self:_tint()))
@@ -1776,7 +1782,7 @@ function Module:Destroy()
 		return
 	end
 	if self.On and self.Callback then
-		task.spawn(self.Callback, false)
+		ui:_call(self.Callback, self._label or self.Name, false)
 	end
 	self.On = false
 	if ui._page == self then
@@ -2996,7 +3002,7 @@ function UI:Dialog(title, text, buttons, callback)
 			end
 			close()
 			if callback then
-				task.spawn(callback, name, i)
+				self:_call(callback, "dialog " .. tostring(title), name, i)
 			end
 		end)
 	end
@@ -4164,6 +4170,39 @@ function UI:Start(opts)
 	return self
 end
 
+-- fn runs when the window is unloaded, after every module has been turned off: clean up your own things there.
+function UI:OnUnload(fn)
+	assert(type(fn) == "function", "OnUnload needs a function")
+	table.insert(self._unload, fn)
+	return self
+end
+
+-- Runs one of the script's callbacks in its own thread. If it errors, the error and its traceback go to the
+-- console and a notification says where, at most once every 5 seconds for each place, so a callback that
+-- fails on every slider step doesn't flood either.
+function UI:_call(fn, where, ...)
+	task.spawn(function(...)
+		local ok, err = xpcall(fn, function(e)
+			return debug.traceback(tostring(e), 2)
+		end, ...)
+		if ok then
+			return
+		end
+		local now, last = os.clock(), self._errAt[where]
+		if last and now - last.at < 5 then
+			last.hidden += 1
+			return
+		end
+		local hidden = last and last.hidden or 0
+		self._errAt[where] = { at = now, hidden = 0 }
+		warn("[" .. self.Title .. "] Error in " .. where .. (hidden > 0 and " (" .. hidden .. " more since the last one)" or "") .. ": " .. tostring(err))
+		if not self.Dead then
+			local first = (tostring(err):match("^[^\n]*"):gsub("^.-:%d+: ", ""))
+			self:Notify("Error in " .. where, first, 6, "triangle-exclamation", C.Danger)
+		end
+	end, ...)
+end
+
 -- Saves, turns every module off through its callback, and removes everything.
 function UI:Destroy()
 	if self.Dead then
@@ -4178,9 +4217,12 @@ function UI:Destroy()
 	end
 	for _, m in self.Modules do
 		if m.On and m.Callback then
-			task.spawn(m.Callback, false)
+			self:_call(m.Callback, m._label or m.Name, false)
 		end
 		m.On = false
+	end
+	for _, fn in self._unload do
+		self:_call(fn, "OnUnload")
 	end
 	self.Gui:Destroy()
 	if self._blur then
@@ -4211,7 +4253,7 @@ function Lib.new(title, opts)
 	local accent = visible(toColor(opts.accent) or Color3.fromHex(THEMES[theme].accent))
 	local self = setmetatable({
 		Title = title, Key = opts.key or "RightShift", Theme = theme, Glass = 0, PadKey = "ButtonSelect",
-		_logo = opts.logo, _intro = opts.intro, _padSliders = setmetatable({}, { __mode = "k" }), Accent = accent, Ink = inkOn(accent),
+		_logo = opts.logo, _intro = opts.intro, _unload = {}, _errAt = {}, _padSliders = setmetatable({}, { __mode = "k" }), Accent = accent, Ink = inkOn(accent),
 		Profile = "Default", Modules = {}, Open = false, Dead = false, Scale = 1, Dim = true, Blur = false, Jewels = false,
 		ReducedMotion = GuiService.ReducedMotionEnabled, NotifyToggles = false,
 		_conns = {}, _byId = {}, _cats = {}, _widgets = {}, _groups = {}, _nav = {}, _catCount = 0, _twinkle = 0, _sinceGlint = 0, _w = WIDTH, _h = HEIGHT, _profilesOpen = false, _profilesHeight = 0, _held = {}, _afterDrag = {}, _size = Vector2.new(WIDTH, HEIGHT), _fps = 60, _data = {},

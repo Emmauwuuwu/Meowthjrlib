@@ -157,7 +157,12 @@ return function(Lib)
 	ui:SetTheme("Graphite") assert(g._box.BackgroundColor3:ToHex():upper() == "2B2927", "back to dark")
 	local logo = Lib.new("Logo check", { store = store(), logo = 1, theme = { Window = "111111", Tile = "222222" } })
 	assert(#logo._markTiles == 0 and logo.Theme == "Custom", "logo and custom theme")
+	local unloaded = false
+	logo:OnUnload(function() unloaded = true end)
 	logo:Destroy()
+	assert(unloaded, "OnUnload runs")
+	local bad = g:Toggle("Bad", {}, function(v) if v then error("boom") end end)
+	bad:Set(true) assert(ui._errAt[bad:_where()] and bad.Value, "callback error caught")
 
 	local again = Lib.new("Self check", { store = store() })
 	assert(ui.Dead, "rerun replaces the old window")
