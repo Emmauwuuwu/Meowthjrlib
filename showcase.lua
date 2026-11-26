@@ -47,14 +47,12 @@ display:Label("Labels can be <b>bold</b>, <i>italic</i> or <u>underlined</u>.", 
 local live = display:Label("This text changes while you watch.")
 local bar = display:Progress("Progress", { tip = "Moves while this module is on" })
 display:Image("rbxthumb://type=AvatarHeadShot&id=" .. Players.LocalPlayer.UserId .. "&w=150&h=150", 120)
-display.Callback = function(on)
-	while on and display.On and not ui.Dead do
-		local x = os.clock() % 5 / 5
-		bar:Update(x, math.round(x * 100) .. "% done")
-		live:SetText("Updated at " .. os.date("%H:%M:%S"))
-		task.wait(0.1)
-	end
-end
+-- Runs every frame while Display is on.
+display:Loop(function()
+	local x = os.clock() % 5 / 5
+	bar:Update(x, math.round(x * 100) .. "% done")
+	live:SetText("Updated at " .. os.date("%H:%M:%S"))
+end)
 
 local smart = basics:Module("Smart settings", { icon = "lightning-bolt", tip = "Settings that appear when needed" })
 local extra = smart:Toggle("Show extra settings", { tip = "Turn on to reveal a group" })

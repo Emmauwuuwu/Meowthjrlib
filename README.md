@@ -20,7 +20,7 @@ ui:Start() -- last: loads the saved profile and opens the window
 
 ## Module options
 
-`module:Kind(name, options, callback)`. Every kind takes `tip`, shown under its name. The result has `.Value`, `:Set(v)` and `:Reset()`.
+`module:Kind(name, options, callback)`. Every kind takes `tip`, shown under its name, and `id`, which it saves under instead of its name, so you can rename it in your script without losing what people set. The result has `.Value`, `:Set(v)` and `:Reset()`.
 
 | Kind | Options |
 |---|---|
@@ -49,9 +49,12 @@ Keys are Roblox key names, `MouseButton2`, `MouseButton3`, or a combination: `"L
 
 ## The rest
 
-- `category:Module(name, {default, key, icon, tip, toggle}, callback)`: `toggle = false`, or `category:Group(name)`, makes a box with no on/off switch. `icon` is a Builder Icons name such as `"sword"` or `"person-running"`, or an image ID. Without one, Meowthjrlib guesses from the name ("Clock" gets a clock) or uses the category's icon.
+- `category:Module(name, {default, key, icon, tip, toggle, id}, callback)`: `toggle = false`, or `category:Group(name)`, makes a box with no on/off switch. `icon` is a Builder Icons name such as `"sword"` or `"person-running"`, or an image ID. Without one, Meowthjrlib guesses from the name ("Clock" gets a clock) or uses the category's icon.
 - `ui:Category(name, {icon, color})`: `color` is used only when Settings > Color style is "By category"; otherwise everything wears the accent
 - `local main = category:Tab("Main")`, then `main:Module(...)`: a category with two or more tabs gets a strip to switch between them. Modules made on the category itself go on the first tab.
+- `module:Loop(function(dt) end)`: runs every frame while the module is on.
+- `module:Connect(signal, function() end)`: connected while the module is on, disconnected when it's off or unloaded.
+- `module:Get("Speed")` or `module.Values.Speed`: a setting's value by name. `module.Values.Speed = 5` sets it.
 - `module:Set(on)`, `module:SetKey("F")`, `module.On`, `module:SetName(text)`, `module:SetTip(text)`, `module:Destroy()`
 - `module:Widget(function() return "text" end)`: on-screen text while the module is on
 - `category:ActiveList()`, `category:KeyList()`, `category:Watermark()`, `category:KeyViewer()`: ready-made widgets. Roblox doesn't report side mouse buttons: have your mouse software send F13 and F14, then turn on Side buttons
@@ -61,6 +64,8 @@ Keys are Roblox key names, `MouseButton2`, `MouseButton3`, or a combination: `"L
 - `ui:SetMinimized(bool)`: folds the window to its header bar, like the − button. `ui:SetTheme(name)`, `ui:Notify(title, text, seconds, icon, color)`, `ui:SetAccent(color)`, `ui:SetOpen(bool)`, `ui:SetProfile(name)`, `ui:Export()`, `ui:Import(text)`
 - `ui:Destroy()`: saves, calls every active module's callback with `false`, removes everything
 - `ui:OnUnload(function() end)`: runs when the window is unloaded, after every module is off. Disconnect your own connections and remove your own parts there.
+
+Misspelled option names (`defualt`, `mx`) and slider defaults outside min to max print a warning in the console. If you forget `ui:Start()`, the window starts itself after 3 seconds and says so.
 
 Option callbacks run once at `Start` with their starting value. A module's callback runs at `Start` only if it starts on.
 

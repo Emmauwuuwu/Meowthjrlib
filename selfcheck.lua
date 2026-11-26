@@ -143,6 +143,7 @@ return function(Lib)
 		assert(not seen[x._row.LayoutOrder], "rows keep a unique order after a delete")
 		seen[x._row.LayoutOrder] = true
 	end
+	g.Values.Fly = true assert(fly.Value and g:Get("Fly") == true, "values by name") fly:Set(false)
 	g:SetName("Plain box") g:SetTip("No switch")
 	local t1, t2 = cat:Tab("One"), cat:Tab("Two")
 	local a1, a2 = t1:Module("In one"), t2:Module("In two")

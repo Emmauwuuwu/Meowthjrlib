@@ -184,6 +184,66 @@ local function tbl(v)
 	return type(v) == "table" and v or {}
 end
 
+local function traceback(e)
+	return debug.traceback(tostring(e), 2)
+end
+
+-- How many single-letter edits turn a into b (capped, since only near misses matter).
+local function distance(a, b)
+	if math.abs(#a - #b) > 2 then
+		return 9
+	end
+	a, b = a:lower(), b:lower()
+	local prev = {}
+	for j = 0, #b do
+		prev[j] = j
+	end
+	for i = 1, #a do
+		local cur = { [0] = i }
+		for j = 1, #b do
+			cur[j] = math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a:sub(i, i) == b:sub(j, j) and 0 or 1))
+		end
+		prev = cur
+	end
+	return prev[#b]
+end
+
+local function keys(...)
+	local t = {}
+	for _, k in { ... } do
+		t[k] = true
+	end
+	return t
+end
+local OPTION_KEYS = keys("tip", "showIf", "enabledIf", "reason", "default", "key", "icon", "presets", "id", "attach", "slot", "changed",
+	"includeSelf", "min", "max", "step", "suffix", "lines", "placeholder", "multi", "alpha", "rich")
+local MODULE_KEYS = keys("default", "key", "icon", "tip", "toggle", "id")
+local WINDOW_KEYS = keys("key", "theme", "accent", "logo", "intro", "store")
+local CATEGORY_KEYS = keys("icon", "color")
+
+-- Warns about an option name it doesn't know, with the closest one it does, so a typo isn't silently ignored.
+local hinted = {}
+local function hint(msg)
+	if not hinted[msg] then
+		hinted[msg] = true
+		warn("[Meowthjrlib] " .. msg)
+	end
+end
+local function checkOpts(where, opts, known)
+	for k in opts do
+		if type(k) == "string" and not known[k] then
+			local best, bestD = nil, 3
+			for name in known do
+				local d = distance(k, name)
+				if d < bestD then
+					best, bestD = name, d
+				end
+			end
+			hint(where .. ": unknown option '" .. k .. "'" .. (best and ". Did you mean '" .. best .. "'?" or ""))
+		end
+	end
+end
+
 local function isPress(input)
 	return input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch
 end
@@ -796,7 +856,7 @@ function Option:Destroy()
 		end
 	end
 	table.remove(m.Options, i)
-	m._byName[self.Name] = nil
+	m._byName[self.Name], m._byKey[self.SaveKey] = nil, nil
 	for _, x in { self._row, self._swatch } do
 		x:Destroy()
 	end
@@ -900,9 +960,13 @@ function Module:_option(kind, name, opts, cb)
 	opts = opts or {}
 	assert(type(name) == "string", kind .. " needs a name")
 	assert(not self._byName[name], "Duplicate option '" .. name .. "' in " .. self.Name)
+	checkOpts(self.Name .. " > " .. name, opts, OPTION_KEYS)
+	-- Saved under id when it has one, so the name in the script can change without losing the value.
+	local saveKey = opts.id or name
+	assert(not self._byKey[saveKey], "Duplicate setting id '" .. saveKey .. "' in " .. self.Name)
 	local o = setmetatable({
 		Kind = kind, Name = name, Module = self, Callback = cb, Tip = opts.tip, Icon = opts.icon, Presets = opts.presets, ShowIf = opts.showIf,
-		EnabledIf = opts.enabledIf, Reason = opts.reason, Attach = opts.attach, Slot = opts.slot,
+		EnabledIf = opts.enabledIf, Reason = opts.reason, Attach = opts.attach, Slot = opts.slot, SaveKey = saveKey,
 	}, Option)
 	if kind == "Toggle" or kind == "Button" then
 		assert(opts.key == nil or validBind(opts.key), "Unknown key '" .. tostring(opts.key) .. "'")
@@ -935,11 +999,18 @@ function Module:_option(kind, name, opts, cb)
 	if kind == "Keybind" then
 		o.Key = o.Value ~= "" and o.Value or nil
 	end
-	self._byName[name] = o
+	self._byName[name], self._byKey[saveKey] = o, o
+	if (kind == "Slider" or kind == "Range") and opts.default ~= nil then
+		for _, v in type(opts.default) == "table" and opts.default or { opts.default } do
+			if type(v) == "number" and (v < o.Min or v > o.Max) then
+				hint(self.Name .. " > " .. name .. ": default " .. v .. " is outside " .. o.Min .. " to " .. o.Max .. ", so it was moved inside")
+			end
+		end
+	end
 	table.insert(self.Options, o)
 	-- Options added after Start pick up their saved value straight away.
 	if self.UI._started and HAS_VALUE[kind] then
-		o:_load(tbl(tbl(tbl(self.UI._data.modules)[self.Id]).opts)[name], true)
+		o:_load(tbl(tbl(tbl(self.UI._data.modules)[self.Id]).opts)[saveKey], true)
 	end
 	-- These four get their text after this returns, and show themselves then.
 	if kind ~= "Label" and kind ~= "Section" and kind ~= "Progress" and kind ~= "Image" and kind ~= "Copy" then
@@ -1723,6 +1794,7 @@ function Module:Set(on, force)
 		return
 	end
 	self.On = on
+	self:_link()
 	self:_repaint()
 	if self._widget then
 		self:_paintWidget()
@@ -1737,6 +1809,48 @@ function Module:Set(on, force)
 		self.UI:_paintHeader()
 	end
 	self.UI:_save()
+end
+
+-- A setting's value by its name.
+function Module:Get(name)
+	local o = self._byName[name]
+	assert(o, "No setting '" .. tostring(name) .. "' in " .. self.Name)
+	return o.Value
+end
+
+-- fn(dt) runs every frame while the module is on.
+function Module:Loop(fn)
+	assert(type(fn) == "function", "Loop needs a function")
+	self._loops = self._loops or {}
+	table.insert(self._loops, fn)
+	return self
+end
+
+-- Connects fn to signal while the module is on; it's disconnected when the module turns off or the window unloads.
+function Module:Connect(signal, fn)
+	assert(typeof(signal) == "RBXScriptSignal" and type(fn) == "function", "Connect needs a signal and a function")
+	self._links = self._links or {}
+	table.insert(self._links, { signal = signal, fn = fn })
+	self:_link()
+	return self
+end
+
+-- Makes the module's connections match whether it's on.
+function Module:_link()
+	local live = self.On and not self.UI.Dead
+	for _, l in self._links or {} do
+		if live and not l.conn then
+			l.conn = l.signal:Connect(function(...)
+				local ok, err = xpcall(l.fn, traceback, ...)
+				if not ok then
+					self.UI:_report(self._label or self.Name, err)
+				end
+			end)
+		elseif not live and l.conn then
+			l.conn:Disconnect()
+			l.conn = nil
+		end
+	end
 end
 
 function Module:Toggle_()
@@ -1785,6 +1899,7 @@ function Module:Destroy()
 		ui:_call(self.Callback, self._label or self.Name, false)
 	end
 	self.On = false
+	self:_link()
 	if ui._page == self then
 		ui:_closePage()
 	end
@@ -1926,15 +2041,29 @@ function Category:Module(name, opts, cb)
 	end
 	opts = opts or {}
 	local ui = self.UI
-	local id = self.Name .. "/" .. name
+	checkOpts(self.Name .. "/" .. name, opts, MODULE_KEYS)
+	-- Saved under id when it has one, so the name in the script can change without losing its settings.
+	local id = self.Name .. "/" .. (opts.id or name)
 	assert(not ui._byId[id], "Duplicate module '" .. id .. "'")
 	assert(opts.key == nil or validBind(opts.key), "Unknown key '" .. tostring(opts.key) .. "'")
 	local m = setmetatable({
-		Name = name, Id = id, Category = self.Name, UI = ui, Callback = cb, Options = {}, _byName = {},
+		Name = name, Id = id, Category = self.Name, UI = ui, Callback = cb, Options = {}, _byName = {}, _byKey = {},
 		On = false, Default = opts.default == true, Key = opts.key, DefaultKey = opts.key,
 		KeyMode = "Toggle", Favorite = false, Icon = opts.icon or guessIcon(name, self.Icon), Tip = opts.tip, Hidden = self.Hidden,
 		NoSwitch = opts.toggle == false,
 	}, Module)
+	-- module.Values.Speed reads a setting, module.Values.Speed = 5 sets it.
+	m.Values = setmetatable({}, {
+		__index = function(_, k)
+			local o = m._byName[k]
+			return o and o.Value
+		end,
+		__newindex = function(_, k, v)
+			local o = m._byName[k]
+			assert(o, "No setting '" .. tostring(k) .. "' in " .. m.Name)
+			o:Set(v)
+		end,
+	})
 	ui._byId[id] = m
 	table.insert(ui.Modules, m)
 	m._order = #ui.Modules
@@ -2178,10 +2307,10 @@ function UI:_loadModule(m, force)
 	local opts = tbl(s.opts)
 	for _, o in m.Options do
 		if HAS_VALUE[o.Kind] then
-			o:_load(opts[o.Name], force)
+			o:_load(opts[o.SaveKey], force)
 		end
 		if o.Kind == "Toggle" or o.Kind == "Button" then
-			local k = tbl(s.optKeys)[o.Name]
+			local k = tbl(s.optKeys)[o.SaveKey]
 			o.Key = k ~= false and (validBind(k) and k or o.DefaultKey) or nil
 		end
 	end
@@ -2254,11 +2383,11 @@ function UI:_snapshot()
 		s.on, s.key, s.mode, s.fav, s.opts = m.On, m.Key or false, m.KeyMode, m.Favorite, tbl(s.opts)
 		for _, o in m.Options do
 			if HAS_VALUE[o.Kind] then
-				s.opts[o.Name] = o:_dump()
+				s.opts[o.SaveKey] = o:_dump()
 			end
 			if not m.Hidden and (o.Kind == "Toggle" or o.Kind == "Button") then
 				s.optKeys = tbl(s.optKeys)
-				s.optKeys[o.Name] = o.Key or false
+				s.optKeys[o.SaveKey] = o.Key or false
 			end
 		end
 		if m._widget then
@@ -2756,6 +2885,7 @@ function UI:_addNav(name, text, iconName, cat)
 end
 
 function UI:Category(name, opts)
+	checkOpts("Category " .. tostring(name), opts or {}, CATEGORY_KEYS)
 	assert(type(name) == "string" and name ~= "All" and name ~= "Favorites", "Bad category name")
 	local c = self._cats[name]
 	if not c then
@@ -4086,6 +4216,16 @@ function UI:_inputs()
 				m._widgetTick()
 			end
 		end
+		for _, m in self.Modules do
+			if m.On and m._loops then
+				for _, fn in m._loops do
+					local ok, err = xpcall(fn, traceback, dt)
+					if not ok then
+						self:_report(m._label or m.Name, err)
+					end
+				end
+			end
+		end
 		self._fps += (1 / math.max(dt, 0.001) - self._fps) * 0.05
 		since += dt
 		if since < 0.25 then
@@ -4103,44 +4243,80 @@ function UI:_inputs()
 	end)
 end
 
--- A short loading card before the window first opens.
+-- The start screen: the mark assembles over a soft glow, the title rises, a thin line fills,
+-- then it all lifts away while the window unfolds underneath.
 function UI:_playIntro(text, done)
+	local quick = self.ReducedMotion
 	local before = #(self._markTiles or {})
-	local card = corner(make("CanvasGroup", {
-		BackgroundColor3 = C.Window, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(300, 156),
-		GroupTransparency = 1, ZIndex = 40,
-	}, self.Gui), 18)
-	line(card)
-	local scale = make("UIScale", { Scale = 0.92 }, card)
-	local marks = self:_mark(card, 40, { AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 24) })
+	local center = Enum.TextXAlignment.Center
+	local screen = make("Frame", {
+		BackgroundColor3 = C.Shade, BackgroundTransparency = 1, Position = UDim2.fromOffset(0, -100), Size = UDim2.new(1, 0, 1, 200), ZIndex = 40,
+	}, self.Gui)
+	local content = make("CanvasGroup", {
+		BackgroundTransparency = 1, AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(420, 300),
+		GroupTransparency = 1, ZIndex = 41,
+	}, self.Gui)
+	local fit = self:_scaleNow()
+	local zoom = make("UIScale", { Scale = fit * 0.94 }, content)
+	local glow = orb(content, self.Accent, 150, 0.975)
+	glow.Position = UDim2.fromOffset(210, 100)
+	local marks = self:_mark(content, 56, { AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(210, 100) })
 	self:_paintChrome()
-	label(card, self.Title, { FontFace = F.head, TextSize = 18, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(0, 76), Size = UDim2.new(1, 0, 0, 24) })
-	label(card, text, { TextColor3 = C.Muted, TextSize = 14, TextXAlignment = Enum.TextXAlignment.Center, Position = UDim2.fromOffset(0, 100), Size = UDim2.new(1, 0, 0, 18) })
-	local track = corner(make("Frame", { BackgroundColor3 = C.Track, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.new(0.5, 0, 0, 130), Size = UDim2.fromOffset(180, 4) }, card), 2)
-	local fill = corner(make("Frame", { BackgroundColor3 = self.Accent, Size = UDim2.fromScale(0, 1) }, track), 2)
-	self:_tween(card, 0.35, { GroupTransparency = 0 })
-	self:_tween(scale, 0.45, { Scale = 1 }, Enum.EasingStyle.Back)
-	for i, s in marks do
-		s.Scale = 0
-		task.delay(self.ReducedMotion and 0 or 0.1 + i * 0.07, function()
-			if not self.Dead then
-				self:_tween(s, 0.45, { Scale = 1 }, Enum.EasingStyle.Back)
+	local clip = make("Frame", { BackgroundTransparency = 1, ClipsDescendants = true, Position = UDim2.fromOffset(0, 152), Size = UDim2.new(1, 0, 0, 36) }, content)
+	local title = label(clip, self.Title, { FontFace = F.head, TextSize = 26, TextXAlignment = center, Position = UDim2.fromOffset(0, 34), TextTransparency = 1 })
+	local sub = label(content, text, { TextColor3 = C.Muted, TextSize = 14, TextXAlignment = center, Position = UDim2.fromOffset(0, 192), Size = UDim2.new(1, 0, 0, 18), TextTransparency = 1 })
+	local track = corner(make("Frame", { BackgroundColor3 = C.Track, BackgroundTransparency = 0.5, AnchorPoint = Vector2.new(0.5, 0), Position = UDim2.fromOffset(210, 230), Size = UDim2.fromOffset(200, 2) }, content), 1)
+	local fill = corner(make("Frame", { BackgroundColor3 = self.Accent, Size = UDim2.fromScale(0, 1) }, track), 1)
+	-- a sheen that keeps running along the line while it fills
+	local sheen = make("UIGradient", { Offset = Vector2.new(-1, 0), Transparency = NumberSequence.new({
+		NumberSequenceKeypoint.new(0, 0.45), NumberSequenceKeypoint.new(0.5, 0), NumberSequenceKeypoint.new(1, 0.45),
+	}) }, fill)
+	local credit = label(content, "Meowthjrlib", { TextColor3 = C.Muted, TextSize = 12, TextXAlignment = center, Position = UDim2.fromOffset(0, 268), Size = UDim2.new(1, 0, 0, 16), TextTransparency = 1 })
+
+	local function at(t, fn)
+		task.delay(quick and 0 or t, function()
+			if not self.Dead and content.Parent then
+				fn()
 			end
 		end)
 	end
-	self:_tween(fill, 1.1, { Size = UDim2.fromScale(1, 1) }, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
-	task.delay(self.ReducedMotion and 0.2 or 1.3, function()
-		if self.Dead then
-			return
+	self:_tween(screen, 0.45, { BackgroundTransparency = 0.45 })
+	self:_tween(content, 0.35, { GroupTransparency = 0 })
+	self:_tween(zoom, 0.7, { Scale = fit })
+	for i, s in marks do
+		local tile = s.Parent
+		s.Scale = 0
+		if not self._logo then
+			tile.Rotation = -70
 		end
-		self:_tween(scale, 0.25, { Scale = 0.96 })
-		self:_tween(card, 0.25, { GroupTransparency = 1 }).Completed:Connect(function()
-			card:Destroy()
+		at(0.1 + i * 0.08, function()
+			self:_tween(s, 0.6, { Scale = 1 }, Enum.EasingStyle.Back)
+			self:_tween(tile, 0.6, { Rotation = 0 })
+		end)
+	end
+	at(0.45, function()
+		self:_tween(title, 0.6, { Position = UDim2.fromOffset(0, 0), TextTransparency = 0 })
+	end)
+	at(0.6, function()
+		self:_tween(sub, 0.45, { TextTransparency = 0 })
+		self:_tween(credit, 0.6, { TextTransparency = 0.55 })
+		self:_tween(fill, 1.15, { Size = UDim2.fromScale(1, 1) }, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut)
+		if not quick then
+			TweenService:Create(sheen, TweenInfo.new(0.9, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1), { Offset = Vector2.new(1, 0) }):Play()
+		end
+	end)
+	at(quick and 0.3 or 1.85, function()
+		self:_tween(zoom, 0.4, { Scale = fit * 1.05 }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+		self:_tween(content, 0.35, { GroupTransparency = 1 }, Enum.EasingStyle.Quint, Enum.EasingDirection.In)
+		self:_tween(screen, 0.45, { BackgroundTransparency = 1 })
+		done()
+		task.delay(0.5, function()
+			screen:Destroy()
+			content:Destroy()
 			for i = #self._markTiles, before + 1, -1 do
 				table.remove(self._markTiles, i)
 			end
 		end)
-		done()
 	end)
 end
 
@@ -4182,25 +4358,26 @@ end
 -- fails on every slider step doesn't flood either.
 function UI:_call(fn, where, ...)
 	task.spawn(function(...)
-		local ok, err = xpcall(fn, function(e)
-			return debug.traceback(tostring(e), 2)
-		end, ...)
-		if ok then
-			return
-		end
-		local now, last = os.clock(), self._errAt[where]
-		if last and now - last.at < 5 then
-			last.hidden += 1
-			return
-		end
-		local hidden = last and last.hidden or 0
-		self._errAt[where] = { at = now, hidden = 0 }
-		warn("[" .. self.Title .. "] Error in " .. where .. (hidden > 0 and " (" .. hidden .. " more since the last one)" or "") .. ": " .. tostring(err))
-		if not self.Dead then
-			local first = (tostring(err):match("^[^\n]*"):gsub("^.-:%d+: ", ""))
-			self:Notify("Error in " .. where, first, 6, "triangle-exclamation", C.Danger)
+		local ok, err = xpcall(fn, traceback, ...)
+		if not ok then
+			self:_report(where, err)
 		end
 	end, ...)
+end
+
+function UI:_report(where, err)
+	local now, last = os.clock(), self._errAt[where]
+	if last and now - last.at < 5 then
+		last.hidden += 1
+		return
+	end
+	local hidden = last and last.hidden or 0
+	self._errAt[where] = { at = now, hidden = 0 }
+	warn("[" .. self.Title .. "] Error in " .. where .. (hidden > 0 and " (" .. hidden .. " more since the last one)" or "") .. ": " .. tostring(err))
+	if not self.Dead then
+		local first = (tostring(err):match("^[^\n]*"):gsub("^.-:%d+: ", ""))
+		self:Notify("Error in " .. where, first, 6, "triangle-exclamation", C.Danger)
+	end
 end
 
 -- Saves, turns every module off through its callback, and removes everything.
@@ -4220,6 +4397,7 @@ function UI:Destroy()
 			self:_call(m.Callback, m._label or m.Name, false)
 		end
 		m.On = false
+		m:_link()
 	end
 	for _, fn in self._unload do
 		self:_call(fn, "OnUnload")
@@ -4236,6 +4414,7 @@ end
 function Lib.new(title, opts)
 	assert(type(title) == "string" and cleanName(title) ~= "", "Lib.new needs a title")
 	opts = opts or {}
+	checkOpts("Lib.new", opts, WINDOW_KEYS)
 	assert(opts.key == nil or validBind(opts.key), "Unknown key '" .. tostring(opts.key) .. "'")
 	-- Running the same script twice replaces the first window instead of stacking a second.
 	local env = getgenv and getgenv() or _G
@@ -4265,6 +4444,13 @@ function Lib.new(title, opts)
 	self:_buildSettings()
 	self:_inputs()
 	env.MeowthjrlibWindows[title] = self
+	-- Forgetting Start would leave nothing on screen, so it starts anyway after a moment.
+	task.delay(3, function()
+		if not self._started and not self.Dead then
+			hint(title .. ": ui:Start() wasn't called, so it was started for you. Call it after making your modules.")
+			self:Start()
+		end
+	end)
 	return self
 end
 
