@@ -26,13 +26,14 @@ ui:Start() -- last: loads the saved profile and opens the window
 |---|---|
 | `Toggle` | `default`, `key` |
 | `Slider` | `min`, `max`, `step`, `default`, `suffix` |
+| `Number` | `min`, `max`, `step`, `default`, `suffix`. A box you type in, with − and + |
 | `Range` | like Slider, `default = {low, high}`; the value is `{low, high}` |
 | `Dropdown` | the choices as a list, `default`, `multi`. `:SetChoices(list)` replaces them; past 8 it gets a search box |
 | `TextBox` | `default`, `max` (length), `lines`, `placeholder` |
 | `Color` | `default` (Color3 or hex), `presets` (list of Color3), `alpha` (0 to 1; the callback gets `color, alpha`) |
 | `Button` | `icon`, `key` |
 | `Label(text, {rich = true})` | `:SetText(text)` |
-| `Section(text)` | starts a titled group |
+| `Section(text, {collapsed})` | starts a titled group; click its title to fold it |
 | `Progress(name)` | `:Update(0 to 1, text)` |
 | `Image(id, height)` | |
 | `Keybind` | `default`, `changed`. A key the user picks; the callback runs when it's pressed. `:IsDown()` says whether it's held |
@@ -59,6 +60,7 @@ Keys are Roblox key names, `MouseButton2`, `MouseButton3`, or a combination: `"L
 - `module:Widget(function() return "text" end)`: on-screen text while the module is on
 - `category:ActiveList()`, `category:KeyList()`, `category:Watermark()`, `category:KeyViewer()`: ready-made widgets. Roblox doesn't report side mouse buttons: have your mouse software send F13 and F14, then turn on Side buttons
 - `ui:Dialog(title, text, {"Cancel", "OK"}, function(choice) end)`
+- `ui:Prompt(title, text, {placeholder, default}, function(text) end)`: asks for a line of text; `text` is nil if cancelled
 - `Lib.new(title, {key, theme, accent, logo, intro})`: themes are Graphite, Mono, Obsidian, Midnight, Forest, Wine, Ocean and Light, or a table of colors. `accent` overrides the theme's accent. `logo` is an image ID for the corner of the window. `intro = "Loading..."` shows a short loading card before it opens.
 - `ui:AddTheme(name, {Window, Fade, Panel, Tile, Menu, Field, Socket, Track, Knob, Text, Muted, accent})`: adds it to the Theme list. Missing colors come from Graphite; no two may be the same.
 - `ui:SetMinimized(bool)`: folds the window to its header bar, like the − button. `ui:SetTheme(name)`, `ui:Notify(title, text, seconds, icon, color)`, `ui:SetAccent(color)`, `ui:SetOpen(bool)`, `ui:SetProfile(name)`, `ui:Export()`, `ui:Import(text)`
@@ -83,7 +85,7 @@ Profiles save to `Meowthjrlib/<title>/` in the executor's workspace folder. With
 - Toggles and buttons have their own Set key.
 - Ctrl+F searches modules and their settings.
 - With a controller, Select opens the window (set another in Settings). Move with the D-pad, A presses, LB and RB move the selected slider.
-- Settings has the open key, the gamepad open key, a theme, transparency (see the game through the window), the color style (one color by default, or a gem per category), the accent color, window size, dim, blur and reduced motion. Blur is off by default: it adds a `BlurEffect` to the camera, which the game can see.
+- Settings has anti-AFK (on by default: answers Roblox's idle check with a fake click and, where the executor has `getconnections`, switches off the idle-kick handler; turning it off or unloading puts it back), the open key, the gamepad open key, a theme, transparency (see the game through the window), the color style (one color by default, or a gem per category), the accent color, window size, dim, blur and reduced motion. Blur is off by default: it adds a `BlurEffect` to the camera, which the game can see.
 - Edit layout: drag widgets, which snap to the edges and centre. Right-click resets one.
 
 ## Check

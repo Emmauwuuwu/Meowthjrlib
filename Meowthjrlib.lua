@@ -215,7 +215,7 @@ local function keys(...)
 	end
 	return t
 end
-local OPTION_KEYS = keys("tip", "showIf", "enabledIf", "reason", "default", "key", "icon", "presets", "id", "attach", "slot", "changed",
+local OPTION_KEYS = keys("tip", "showIf", "enabledIf", "reason", "default", "key", "icon", "presets", "id", "attach", "slot", "changed", "collapsed",
 	"includeSelf", "min", "max", "step", "suffix", "lines", "placeholder", "multi", "alpha", "rich")
 local MODULE_KEYS = keys("default", "key", "icon", "tip", "toggle", "id")
 local WINDOW_KEYS = keys("key", "theme", "accent", "logo", "intro", "store")
@@ -633,7 +633,7 @@ end
 
 ---------------------------------------------------------------- options
 
-local HAS_VALUE = { Toggle = true, Slider = true, Dropdown = true, TextBox = true, Color = true, Key = true, Range = true, Keybind = true }
+local HAS_VALUE = { Toggle = true, Slider = true, Dropdown = true, TextBox = true, Color = true, Key = true, Range = true, Keybind = true, Number = true }
 
 local coerce = {}
 function coerce.Toggle(_, v)
@@ -651,6 +651,7 @@ function coerce.Slider(o, v)
 	v = math.clamp(v, o.Min, o.Max)
 	return tonumber(string.format("%.4f", v))
 end
+coerce.Number = coerce.Slider
 function coerce.Range(o, v)
 	if type(v) ~= "table" then
 		return nil
@@ -975,7 +976,11 @@ function Module:_option(kind, name, opts, cb)
 		o.Alpha = type(opts.alpha) == "number" and math.clamp(opts.alpha, 0, 1) or 1
 		o.DefaultAlpha = o.Alpha
 	end
-	if kind == "Slider" or kind == "Range" then
+	if kind == "Number" then
+		-- With no limits a number box takes anything reasonable.
+		o.Min, o.Max, o.Step, o.Suffix = opts.min or -1e9, opts.max or 1e9, opts.step or 1, opts.suffix or ""
+		assert(o.Max > o.Min and o.Step > 0, kind .. " '" .. name .. "' needs max > min and step > 0")
+	elseif kind == "Slider" or kind == "Range" then
 		o.Min, o.Max, o.Step, o.Suffix = opts.min or 0, opts.max or 100, opts.step or 1, opts.suffix or ""
 		assert(o.Max > o.Min and o.Step > 0, kind .. " '" .. name .. "' needs max > min and step > 0")
 	elseif kind == "TextBox" then
@@ -987,7 +992,7 @@ function Module:_option(kind, name, opts, cb)
 		end
 	end
 	if HAS_VALUE[kind] then
-		local fallback = { Toggle = false, Slider = o.Min, Dropdown = o.Multi and {} or (o.Choices and o.Choices[1]), TextBox = "", Color = DEFAULT_ACCENT, Range = { o.Min, o.Max }, Keybind = "" }
+		local fallback = { Toggle = false, Slider = o.Min, Number = o.Min and math.clamp(0, o.Min, o.Max), Dropdown = o.Multi and {} or (o.Choices and o.Choices[1]), TextBox = "", Color = DEFAULT_ACCENT, Range = { o.Min, o.Max }, Keybind = "" }
 		local d = opts.default
 		if d == nil then
 			d = fallback[kind]
@@ -1000,7 +1005,7 @@ function Module:_option(kind, name, opts, cb)
 		o.Key = o.Value ~= "" and o.Value or nil
 	end
 	self._byName[name], self._byKey[saveKey] = o, o
-	if (kind == "Slider" or kind == "Range") and opts.default ~= nil then
+	if (kind == "Slider" or kind == "Range" or kind == "Number") and opts.default ~= nil then
 		for _, v in type(opts.default) == "table" and opts.default or { opts.default } do
 			if type(v) == "number" and (v < o.Min or v > o.Max) then
 				hint(self.Name .. " > " .. name .. ": default " .. v .. " is outside " .. o.Min .. " to " .. o.Max .. ", so it was moved inside")
@@ -1026,7 +1031,7 @@ function Module:_show(o)
 	end
 end
 
-for _, kind in { "Toggle", "Slider", "Dropdown", "TextBox", "Color", "Button", "Range" } do
+for _, kind in { "Toggle", "Slider", "Dropdown", "TextBox", "Color", "Button", "Range", "Number" } do
 	Module[kind] = function(self, name, opts, cb)
 		return self:_option(kind, name, opts, cb)
 	end
@@ -1045,10 +1050,10 @@ function Module:Label(text, opts)
 	return o
 end
 
--- Starts a new titled group of settings.
-function Module:Section(text)
-	local o = self:_option("Section", "section" .. #self.Options)
-	o.Text = text
+-- Starts a new titled group of settings. Click its title to fold it; {collapsed = true} starts folded.
+function Module:Section(text, opts)
+	local o = self:_option("Section", "section" .. #self.Options, opts)
+	o.Text, o.Collapsed = text, opts and opts.collapsed == true
 	self:_show(o)
 	return o
 end
@@ -1734,6 +1739,33 @@ function render.Key(ui, o, parent)
 end
 
 render.Keybind = render.Key
+
+-- A number you type, or step with − and +.
+function render.Number(ui, o, parent)
+	local b = baseRow(ui, parent, o._label or o.Name, o.Tip, nil, 170)
+	ui._padSliders[b] = o
+	local box = ui:_field(b, {
+		AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -46, 0.5, 0), Size = UDim2.fromOffset(84, 30),
+		TextXAlignment = Enum.TextXAlignment.Center, FontFace = F.medium, ZIndex = 2,
+	})
+	local function step(dir)
+		o:Set(o.Value + dir * o.Step)
+	end
+	ui:_iconButton(b, "minus-large", nil, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -134, 0.5, 0), Size = UDim2.fromOffset(30, 30), ZIndex = 2 }, function()
+		step(-1)
+	end)
+	ui:_iconButton(b, "plus-large", nil, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -12, 0.5, 0), Size = UDim2.fromOffset(30, 30), ZIndex = 2 }, function()
+		step(1)
+	end)
+	o._paint = function()
+		box.Text = string.format("%g", o.Value) .. o.Suffix
+	end
+	box.FocusLost:Connect(function()
+		o:Set(tonumber((box.Text:gsub("[^%d%.%-eE]", ""))))
+		o._paint()
+	end)
+	resettable(b, o)
+end
 
 function render.Copy(ui, o, parent)
 	local b = baseRow(ui, parent, o._label or o.Name, o.Tip, nil, 230)
@@ -2490,8 +2522,12 @@ end
 local EST = { Slider = 52, Range = 52, Progress = 52, Section = 30, Label = 44 }
 local function estimate(m)
 	local h = m.Tip and 56 or 46
+	local folded = false
 	for _, o in m.Options do
-		if o.Kind == "Section" or o:_shown() then
+		if o.Kind == "Section" then
+			folded = o.Collapsed
+		end
+		if o.Kind == "Section" or o:_shown() and not folded then
 			local base = o.Attach and 0 or o.Kind == "Image" and o.Height + 24 or o.Kind == "TextBox" and o.Lines > 1 and o.Lines * 18 + 66 or EST[o.Kind] or ROW
 			h += base + (o.Tip and not o.Attach and 14 or 0)
 		end
@@ -2606,8 +2642,24 @@ function UI:_addRow(m, o)
 		o._order = o.Attach and o.Attach._order and o.Attach._order + 1 or m._rows
 	end
 	if o.Kind == "Section" then
-		o._row = label(m._box, o.Text, { FontFace = F.bold, TextSize = 13, TextColor3 = C.Muted, Size = UDim2.new(1, 0, 0, 30) })
-		make("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingTop = UDim.new(0, 8) }, o._row)
+		local b = make("TextButton", {
+			BackgroundTransparency = 1, Text = o.Text, FontFace = F.bold, TextSize = 13, TextColor3 = C.Muted,
+			TextXAlignment = Enum.TextXAlignment.Left, Size = UDim2.new(1, 0, 0, 30),
+		}, m._box)
+		make("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingTop = UDim.new(0, 8) }, b)
+		local arrow = icon(b, "chevron-small-down", 16, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), TextColor3 = C.Muted, Rotation = o.Collapsed and -90 or 0 })
+		b.MouseEnter:Connect(function()
+			self:_tween(b, 0.12, { TextColor3 = C.Text })
+		end)
+		b.MouseLeave:Connect(function()
+			self:_tween(b, 0.2, { TextColor3 = C.Muted })
+		end)
+		b.Activated:Connect(function()
+			o.Collapsed = not o.Collapsed
+			self:_tween(arrow, 0.25, { Rotation = o.Collapsed and -90 or 0 })
+			self:_refreshModule(m)
+		end)
+		o._row = b
 	else
 		local before = #m._box:GetChildren()
 		render[o.Kind](self, o, m._box)
@@ -2656,16 +2708,17 @@ end
 
 -- Shows rows by their showIf, greys them by their enabledIf, and shows section titles only while something under them shows.
 function UI:_refreshModule(m)
-	local title, any = nil, false
+	local title, any, folded = nil, false, false
 	for _, o in m.Options do
 		if o.Kind == "Section" then
 			if title then
 				title.Visible = any
 			end
-			title, any = o._row, false
+			title, any, folded = o._row, false, o.Collapsed
 		elseif o._row then
 			local on = o:_shown() and (not o.Attach or o.Attach:_shown())
-			o._row.Visible = on
+			-- A folded section keeps its title; only the rows under it hide.
+			o._row.Visible = on and not folded
 			if not o.Attach then
 				any = any or on
 			end
@@ -3086,7 +3139,8 @@ end
 
 -- Asks a question over everything. buttons is a list of names; the last is the main one.
 -- callback(name, index) runs when one is clicked. Returns a function that closes it.
-function UI:Dialog(title, text, buttons, callback)
+-- input = {placeholder, default} adds a text field; the callback then gets (choice, index, text).
+function UI:Dialog(title, text, buttons, callback, input)
 	if self.Dead then
 		return function() end
 	end
@@ -3099,7 +3153,12 @@ function UI:Dialog(title, text, buttons, callback)
 	local scale = make("UIScale", { Scale = self:_scaleNow() * 0.85 }, card)
 	label(card, tostring(title), { FontFace = F.head, TextSize = 18, Size = UDim2.new(1, 0, 0, 24), LayoutOrder = 1 })
 	label(card, tostring(text or ""), { TextColor3 = C.Muted, TextWrapped = true, TextTruncate = Enum.TextTruncate.None, Size = UDim2.fromScale(1, 0), AutomaticSize = Enum.AutomaticSize.Y, LayoutOrder = 2 })
-	local row = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 40), LayoutOrder = 3 }, card)
+	local field
+	if input then
+		field = self:_field(card, { Size = UDim2.new(1, 0, 0, 36), LayoutOrder = 3, PlaceholderText = input.placeholder or "", Text = tostring(input.default or "") })
+		pad(field, 10, 0)
+	end
+	local row = make("Frame", { BackgroundTransparency = 1, Size = UDim2.new(1, 0, 0, 40), LayoutOrder = 4 }, card)
 	local l = list(row, 8, Enum.FillDirection.Horizontal)
 	l.HorizontalAlignment, l.VerticalAlignment = Enum.HorizontalAlignment.Right, Enum.VerticalAlignment.Bottom
 	local done = false
@@ -3126,13 +3185,29 @@ function UI:Dialog(title, text, buttons, callback)
 		b.MouseLeave:Connect(function()
 			self:_tween(b, 0.2, { BackgroundTransparency = 0 })
 		end)
-		b.Activated:Connect(function()
+		local function choose()
 			if done then
 				return
 			end
 			close()
 			if callback then
-				self:_call(callback, "dialog " .. tostring(title), name, i)
+				self:_call(callback, "dialog " .. tostring(title), name, i, field and field.Text)
+			end
+		end
+		b.Activated:Connect(choose)
+		-- Enter in the text field presses the last button.
+		if field and main then
+			field.FocusLost:Connect(function(enter)
+				if enter then
+					choose()
+				end
+			end)
+		end
+	end
+	if field then
+		task.delay(0.15, function()
+			if not done then
+				field:CaptureFocus()
 			end
 		end)
 	end
@@ -3971,6 +4046,10 @@ function UI:_buildSettings()
 	s:Toggle("Reduce motion", { default = GuiService.ReducedMotionEnabled }, function(v)
 		self.ReducedMotion = v
 	end)
+	s:Toggle("Anti-AFK", { default = true, tip = "Stops Roblox kicking you after 20 minutes idle" }, function(v)
+		self.AntiAfk = v
+		self:_antiAfk()
+	end)
 	s:Toggle("Notify on toggle", { default = false }, function(v)
 		self.NotifyToggles = v
 	end)
@@ -4238,6 +4317,17 @@ function UI:_inputs()
 			end
 		end
 	end)
+	-- Roblox fires Idled before its idle kick; a fake click counts as activity and resets the idle timer.
+	self._idleHandler = function()
+		if self.AntiAfk then
+			pcall(function()
+				local vu = game:GetService("VirtualUser")
+				vu:CaptureController()
+				vu:ClickButton2(Vector2.zero)
+			end)
+		end
+	end
+	self:_on(Players.LocalPlayer.Idled, self._idleHandler)
 	self:_on(self.Gui:GetPropertyChangedSignal("AbsoluteSize"), function()
 		self:_layout()
 	end)
@@ -4380,6 +4470,43 @@ function UI:_report(where, err)
 	end
 end
 
+-- The second half of anti-AFK: where the executor can list connections, the other handlers on Idled
+-- (the one that kicks you among them) are switched off while anti-AFK is on, and back on otherwise.
+function UI:_antiAfk()
+	if type(getconnections) ~= "function" then
+		return
+	end
+	local ok, conns = pcall(getconnections, Players.LocalPlayer.Idled)
+	if not ok then
+		return
+	end
+	local off = self.AntiAfk and not self.Dead
+	for _, c in conns do
+		pcall(function()
+			if c.Function ~= self._idleHandler then
+				if off then
+					c:Disable()
+				else
+					c:Enable()
+				end
+			end
+		end)
+	end
+end
+
+-- Asks for a line of text. callback(text) gets nil if it was cancelled.
+function UI:Prompt(title, text, opts, callback)
+	if type(opts) == "function" then
+		opts, callback = {}, opts
+	end
+	opts = opts or {}
+	return self:Dialog(title, text, { "Cancel", opts.button or "OK" }, function(_, i, value)
+		if callback then
+			callback(i == 2 and value or nil)
+		end
+	end, opts)
+end
+
 -- Saves, turns every module off through its callback, and removes everything.
 function UI:Destroy()
 	if self.Dead then
@@ -4402,6 +4529,7 @@ function UI:Destroy()
 	for _, fn in self._unload do
 		self:_call(fn, "OnUnload")
 	end
+	self:_antiAfk()
 	self.Gui:Destroy()
 	if self._blur then
 		self._blur:Destroy()
@@ -4431,7 +4559,7 @@ function Lib.new(title, opts)
 	setPalette(THEMES[theme])
 	local accent = visible(toColor(opts.accent) or Color3.fromHex(THEMES[theme].accent))
 	local self = setmetatable({
-		Title = title, Key = opts.key or "RightShift", Theme = theme, Glass = 0, PadKey = "ButtonSelect",
+		Title = title, Key = opts.key or "RightShift", Theme = theme, Glass = 0, PadKey = "ButtonSelect", AntiAfk = true,
 		_logo = opts.logo, _intro = opts.intro, _unload = {}, _errAt = {}, _padSliders = setmetatable({}, { __mode = "k" }), Accent = accent, Ink = inkOn(accent),
 		Profile = "Default", Modules = {}, Open = false, Dead = false, Scale = 1, Dim = true, Blur = false, Jewels = false,
 		ReducedMotion = GuiService.ReducedMotionEnabled, NotifyToggles = false,
